@@ -1,27 +1,29 @@
 import threading
 import queue
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
-# ✨ 引入全局事件总线契约
+# 引入全局事件总线契约
 from ..schema.events import BaseMemoryEvent, EventType, MemoryWriteEvent, GraphExtractionEvent, \
     ConsolidationTriggerEvent
 from ..schema.memory_item import MemoryItem, MemoryStage
 from ..schema.routing import BackendTarget
-# ✨ 引入新版冲突仲裁契约
+# 引入新版冲突仲裁契约
 from ..schema.conflict import ResolutionStrategy
-from ..processor.extractor import GraphExtractor
-from ..processor.conflict_resolver import ConflictResolver
-from ..storage.index_manager import IndexManager
 from ..policies.update_policy import UpdatePolicy, UpdateAction
+
+if TYPE_CHECKING:
+    from ..processor.extractor import GraphExtractor
+    from ..processor.conflict_resolver import ConflictResolver
+    from ..storage.index_manager import IndexManager
 
 
 class AsyncDispatcher:
     def __init__(
             self,
             backends: Dict[BackendTarget, Any],
-            extractor: Optional[GraphExtractor] = None,
-            conflict_resolver: Optional[ConflictResolver] = None,
-            index_manager: Optional[IndexManager] = None,
+            extractor: Optional["GraphExtractor"] = None,
+            conflict_resolver: Optional["ConflictResolver"] = None,
+            index_manager: Optional["IndexManager"] = None,
             update_policy: Optional[UpdatePolicy] = None
     ):
         self.backends = backends

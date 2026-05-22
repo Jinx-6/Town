@@ -118,6 +118,15 @@ class SQLiteLogStorage:
             cursor = conn.execute(query, params)
             return [self._row_to_item(row) for row in cursor.fetchall()]
 
+    def search_text(self, query: str, agent_id: str = None, limit: int = 5) -> List[MemoryItem]:
+        """基于关键词的文本搜索，用于 L1 检索"""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM episodic_memory WHERE content LIKE ? ORDER BY timestamp DESC LIMIT ?",
+                (f"%{query}%", limit)
+            )
+            return [self._row_to_item(row) for row in cursor.fetchall()]
+
     def _row_to_item(self, row: tuple) -> MemoryItem:
         """内部辅助：将数据库行转换为 MemoryItem 对象"""
         return MemoryItem(

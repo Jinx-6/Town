@@ -4,6 +4,7 @@
 # @Software:PyCharm
 
 from memory import MemoryManager
+from LLMClient import LLMClient
 
 
 class CyberAgent:
@@ -14,6 +15,7 @@ class CyberAgent:
         self.personality = personality
         self.base_system_prompt = f"你是{name}，一位{role}。你的性格特点是：{personality}。你在 Datawhale 办公室工作。"
         self.memory = MemoryManager(npc_id=npc_id, max_history_messages=10)
+        self.llm = LLMClient()
 
 
     async def observe_and_react(self, observer_name: str, event_description: str, affinity_level: str = "陌生") -> str:

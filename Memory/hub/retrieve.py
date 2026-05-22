@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime, timezone
 
 from ..schema.memory_item import MemoryItem, MemoryRole, MemoryStage
@@ -8,11 +8,13 @@ from ..schema.retrieval import RetrievalRequest, RetrievedMemory, RetrievalRespo
 from ..storage.working_cache import WorkingMemoryCache
 from ..storage.sqlite_log import SQLiteLogStorage
 from ..storage.vector_store import VectorStore
-from ..storage.graph_db import GraphStore
 from ..processor.planner import QueryPlanner, RetrievalPlan, RetrievalInstruction
 from ..policies.scoring import MemoryScorer
-# ✨ 引入宏观检索策略
+# 引入宏观检索策略
 from ..policies.retrieval_policy import RetrievalPolicy
+
+if TYPE_CHECKING:
+    from ..storage.graph_db import GraphStore
 
 
 class RetrieveHub:
@@ -28,7 +30,7 @@ class RetrieveHub:
             cache: WorkingMemoryCache,
             sqlite: SQLiteLogStorage,
             vector_store: VectorStore,
-            graph_store: GraphStore,
+            graph_store: Optional["GraphStore"],
             scorer: MemoryScorer,
             policy: RetrievalPolicy
     ):
@@ -97,13 +99,12 @@ class RetrieveHub:
             # graph_hits = self.graph_store.search(ins.search_query, limit=graph_limit, agent_id=agent_id)
             # ... 转换 graph_hits 并 upsert ...
 
-        # --- B. 检索 L0/L1 工作记忆 (SQLite) ---
-        # ✨ 修改点 5：SQLite 查询也需要过滤 agent_id
-        if self.sqlite:
+        # --- B. 检索 L1 SQLite 情景记忆 ---
+        if self.sqlite and BackendTarget.SQLITE in allowed_targets:
             sqlite_limit = quotas.get(BackendTarget.SQLITE, 2)
-            # 假设 your_sqlite.search 已经支持 agent_id 过滤
-            # logs = self.sqlite.search_by_agent(ins.search_query, agent_id=agent_id, limit=sqlite_limit)
-            pass
+            logs = self.sqlite.search_text(query=ins.search_query, agent_id=agent_id, limit=sqlite_limit)
+            for log_item in logs:
+                self._upsert_sub_result(local_results, log_item, 0.6, BackendTarget.SQLITE)
 
         # --- C. 检索 L2 向量库 (语义泛化) ---
         if BackendTarget.VECTOR in allowed_targets:
