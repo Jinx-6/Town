@@ -28,27 +28,33 @@ class SQLiteLogStorage:
                     role TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     stage TEXT NOT NULL,
+                    agent_id TEXT DEFAULT 'default_agent',
                     metadata_json TEXT,
                     vector_json TEXT
                 )
             """)
+            # 向前兼容：旧表可能缺少 agent_id 列
+            try:
+                conn.execute("ALTER TABLE episodic_memory ADD COLUMN agent_id TEXT DEFAULT 'default_agent'")
+            except Exception:
+                pass  # 列已存在则忽略
             conn.commit()
 
     def add(self, item: MemoryItem):
         """新增或覆盖一条记忆 (支持 UPSERT)"""
-        # ✨ 加固：安全获取枚举或字符串的值
         role_str = getattr(item.role, 'value', item.role)
         stage_str = getattr(item.stage, 'value', item.stage)
 
         with self._get_connection() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO episodic_memory (id, content, role, timestamp, stage, metadata_json, vector_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO episodic_memory (id, content, role, timestamp, stage, agent_id, metadata_json, vector_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item.id,
                     item.content,
-                    role_str,  # 使用安全变量
+                    role_str,
                     item.timestamp.isoformat(),
-                    stage_str,  # 使用安全变量
+                    stage_str,
+                    item.agent_id,
                     json.dumps(item.metadata.model_dump()),
                     json.dumps(item.vector) if item.vector else None
                 )
@@ -119,22 +125,37 @@ class SQLiteLogStorage:
             return [self._row_to_item(row) for row in cursor.fetchall()]
 
     def search_text(self, query: str, agent_id: str = None, limit: int = 5) -> List[MemoryItem]:
-        """基于关键词的文本搜索，用于 L1 检索"""
+        """基于关键词分词 OR 匹配的文本搜索，支持 agent_id 隔离"""
+        words = [w for w in query.split() if len(w) >= 1]
+        if not words:
+            return []
+
+        clauses = " OR ".join(["content LIKE ?"] * len(words))
+        sql = f"SELECT * FROM episodic_memory WHERE ({clauses})"
+        params = [f"%{w}%" for w in words]
+
+        if agent_id:
+            sql += " AND agent_id = ?"
+            params.append(agent_id)
+
+        sql += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
         with self._get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM episodic_memory WHERE content LIKE ? ORDER BY timestamp DESC LIMIT ?",
-                (f"%{query}%", limit)
-            )
+            cursor = conn.execute(sql, params)
             return [self._row_to_item(row) for row in cursor.fetchall()]
 
     def _row_to_item(self, row: tuple) -> MemoryItem:
-        """内部辅助：将数据库行转换为 MemoryItem 对象"""
+        """内部辅助：将数据库行转换为 MemoryItem 对象
+        列顺序: id, content, role, timestamp, stage, agent_id, metadata_json, vector_json
+        """
         return MemoryItem(
             id=row[0],
             content=row[1],
             role=MemoryRole(row[2]),
             timestamp=datetime.fromisoformat(row[3]),
             stage=MemoryStage(row[4]),
-            metadata=json.loads(row[5]) if row[5] else {},
-            vector=json.loads(row[6]) if row[6] else None
+            agent_id=row[5] if len(row) > 5 and row[5] else "default_agent",
+            metadata=json.loads(row[6]) if len(row) > 6 and row[6] else {},
+            vector=json.loads(row[7]) if len(row) > 7 and row[7] else None
         )
