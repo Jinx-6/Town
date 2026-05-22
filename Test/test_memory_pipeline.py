@@ -225,61 +225,174 @@ class TestMemoryPipeline:
         assert not leaked, f"李四不应检索到张三的数据，实际: {contents}"
 
     # ============================================================
-    # 测试 5：会话信息污染校验
+    # 测试 5：会话信息污染校验（已修复）
     # ============================================================
-    def test_session_pollution_current_input(self):
+    def test_no_session_pollution_after_fix(self):
         """
-        【缺陷演示】当前 demo_cli.py 先写入再检索，
-        导致本轮用户输入被当作"历史记忆"检索出来。
-        本测试还原该问题，并标明修复方案。
+        验证正确流程：先检索 → 生成回复 → 再存储。
+        生成回复前，本轮用户输入不应出现在检索结果中。
         """
-        # 模拟 demo_cli.py 的流程：先写入，再检索
-        current_input = "你还记得昨天我帮你做过什么事吗"
-        self._write_and_wait(current_input, agent_id="zhang_san")
+        # 预存一条旧记忆
+        self._write_and_wait("昨天我们一起修好了发电机", agent_id="zhang_san")
 
-        self._mock_plan(search_query=current_input)
+        # 本轮新输入：先检索，不预先写入
+        current_input = "你还记得昨天我帮你做过什么事吗"
+        self._mock_plan(search_query="昨天 帮忙 修 发电机")
+
         req = RetrievalRequest(query=current_input, limit=5, agent_id="zhang_san")
         result = self.retrieve.retrieve(req, agent_id="zhang_san")
 
         contents = [r.item.content for r in result.results]
-        # 刚刚写入的当前消息会被检索出来 — 这就是污染
+
+        # 断言 1：当前输入不应出现在检索结果中
         polluted = any(current_input in c for c in contents)
-        assert polluted, (
-            "【确认缺陷】当前输入被检索为'历史记忆'。"
-            "修复方案见本函数末尾注释。"
+        assert not polluted, (
+            f"污染未修复！本轮输入不应被当作历史记忆，实际: {contents}"
         )
 
-        # 期望行为（仅注释说明，不做断言）:
-        # 正确流程: 先检索 → 生成回复 → 再存储(用户+助手)
-        # 修复 demo_cli.py 第 127-133 行: 将 ingest 移到 retrieve 和 generate 之后
+        # 断言 2：但旧记忆应该被检索到
+        assert any("发电机" in c for c in contents), (
+            f"旧记忆应被检索到，实际: {contents}"
+        )
+
+        # 断言 3：旧记忆检索到了，且没有混入当前输入
+        old_found = any("发电机" in c for c in contents)
+        assert old_found and not polluted, "检索应命中旧记忆但不含当前输入"
+
+    def test_current_input_stored_after_response(self):
+        """
+        验证：生成回复后，当前输入确实被写入记忆库供后续使用。
+        """
+        # 模拟修复后的流程：先检索，回复后再存储
+        current_input = "我叫进喜"
+        self._mock_plan(search_query="进喜")
+
+        # Step 1: 回复前检索 — 不应该有当前输入
+        req = RetrievalRequest(query=current_input, limit=5, agent_id="zhang_san", score_threshold=0.5)
+        result_before = self.retrieve.retrieve(req, agent_id="zhang_san")
+        contents_before = [r.item.content for r in result_before.results]
+        assert not any(current_input in c for c in contents_before), "回复前不应检索到当前输入"
+
+        # Step 2: 生成回复后，将本轮对话写入
+        assistant_reply = "你好进喜，很高兴认识你"
+        self._write_and_wait(current_input, agent_id="zhang_san")
+        self._write_and_wait(assistant_reply, agent_id="zhang_san", role=MemoryRole.ASSISTANT)
+        time.sleep(0.5)  # 确保异步分发线程全部写入完毕
+
+        # Step 3: 写入后应当可以被检索到
+        req2 = RetrievalRequest(query=current_input, limit=5, agent_id="zhang_san", score_threshold=0.5)
+        result_after = self.retrieve.retrieve(req2, agent_id="zhang_san")
+        contents_after = [r.item.content for r in result_after.results]
+        assert any(current_input in c for c in contents_after), (
+            f"写入后应能检索到当前输入，实际: {contents_after}"
+        )
 
 
 # ============================================================
-# 修复补丁：demo_cli.py 会话污染修正
+# 回归测试：旧数据库兼容性 & JSON 容错
 # ============================================================
-"""
---- demo_cli.py (旧)
-+++ demo_cli.py (新)
-@@ -127,20 +127,14 @@
+class TestSQLiteRowCompat:
+    """验证 _row_to_item 对旧 schema / 脏数据的容错能力"""
 
-+        # ─── 1. 先检索历史记忆（本轮输入尚未入库）───
-+        request = RetrievalRequest(query=user_input, limit=5, agent_id=agent_id)
-+        results = retrieve.retrieve(request, agent_id=agent_id)
-+
-         # ─── 1. 写入用户记忆 ───
-         ingest.process_message(...)
-         time.sleep(0.5)
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.tmpdir, "legacy.db")
 
--        # ─── 2. 检索相关记忆 ───
--        request = RetrievalRequest(...)
--        results = retrieve.retrieve(...)
--
-         ...
+    def teardown_method(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
--        # ─── 5. 将智能体回复也存入记忆 ───
-+        # ─── 5. 将本轮对话（用户 + 助手）批量存入 ───
-         ingest.process_message(content=user_input, ...)
-         ingest.process_message(content=response, ...)
+    def test_old_schema_no_agent_id_column(self):
+        """旧数据库缺少 agent_id 列时，读操作不应崩溃"""
+        # 1. 手工建旧表（无 agent_id 列）
+        raw_conn = __import__("sqlite3").connect(self.db_path)
+        raw_conn.execute("""
+            CREATE TABLE episodic_memory (
+                id TEXT, content TEXT, role TEXT, timestamp TEXT, stage TEXT,
+                metadata_json TEXT, vector_json TEXT
+            )
+        """)
+        raw_conn.execute(
+            "INSERT INTO episodic_memory VALUES (?,?,?,?,?,?,?)",
+            ("old_1", "旧数据无agent_id列", "user", "2025-01-01T00:00:00", "episodic",
+             '{"importance":5}', None)
+        )
+        raw_conn.commit()
+        raw_conn.close()
 
-效果：本轮输入不会污染检索结果，但会被存入供后续对话使用。
-"""
+        # 2. SQLiteLogStorage 启动时自动 ALTER TABLE 加列
+        store = SQLiteLogStorage(db_path=self.db_path)
+        results = store.search_text(query="旧数据", limit=5)
+        assert len(results) == 1
+        assert results[0].content == "旧数据无agent_id列"
+        assert results[0].agent_id == "default_agent"
+        assert results[0].metadata.importance == 5
+
+    def test_corrupt_metadata_json(self):
+        """metadata_json 为无效 JSON 时，应返回空 dict 而非崩溃"""
+        raw_conn = __import__("sqlite3").connect(self.db_path)
+        raw_conn.execute("""
+            CREATE TABLE episodic_memory (
+                id TEXT, content TEXT, role TEXT, timestamp TEXT, stage TEXT,
+                agent_id TEXT DEFAULT 'default_agent', metadata_json TEXT, vector_json TEXT
+            )
+        """)
+        raw_conn.execute(
+            "INSERT INTO episodic_memory VALUES (?,?,?,?,?,?,?,?)",
+            ("bad_1", "metadata坏了", "user", "2025-01-01T00:00:00", "episodic",
+             "zhang_san", "{not valid json!!!", None)
+        )
+        raw_conn.commit()
+        raw_conn.close()
+
+        store = SQLiteLogStorage(db_path=self.db_path)
+        results = store.search_text(query="metadata", limit=5)
+        assert len(results) == 1
+        assert results[0].content == "metadata坏了"
+        assert results[0].metadata.importance == 0  # 降级为默认 Metadata
+
+    def test_corrupt_vector_json(self):
+        """vector_json 为无效 JSON 时，应返回 None 而非崩溃"""
+        raw_conn = __import__("sqlite3").connect(self.db_path)
+        raw_conn.execute("""
+            CREATE TABLE episodic_memory (
+                id TEXT, content TEXT, role TEXT, timestamp TEXT, stage TEXT,
+                agent_id TEXT DEFAULT 'default_agent', metadata_json TEXT, vector_json TEXT
+            )
+        """)
+        raw_conn.execute(
+            "INSERT INTO episodic_memory VALUES (?,?,?,?,?,?,?,?)",
+            ("vec_1", "vector坏了", "user", "2025-01-01T00:00:00", "episodic",
+             "zhang_san", "{}", "{bad vector")
+        )
+        raw_conn.commit()
+        raw_conn.close()
+
+        store = SQLiteLogStorage(db_path=self.db_path)
+        results = store.search_text(query="vector", limit=5)
+        assert len(results) == 1
+        assert results[0].content == "vector坏了"
+        assert results[0].vector is None
+
+    def test_null_metadata_and_vector(self):
+        """metadata_json / vector_json 为 NULL 时不应崩溃"""
+        raw_conn = __import__("sqlite3").connect(self.db_path)
+        raw_conn.execute("""
+            CREATE TABLE episodic_memory (
+                id TEXT, content TEXT, role TEXT, timestamp TEXT, stage TEXT,
+                agent_id TEXT DEFAULT 'default_agent', metadata_json TEXT, vector_json TEXT
+            )
+        """)
+        raw_conn.execute(
+            "INSERT INTO episodic_memory VALUES (?,?,?,?,?,?,?,?)",
+            ("null_1", "全部null", "user", "2025-01-01T00:00:00", "episodic",
+             "zhang_san", None, None)
+        )
+        raw_conn.commit()
+        raw_conn.close()
+
+        store = SQLiteLogStorage(db_path=self.db_path)
+        results = store.list_recent(limit=5)
+        assert len(results) == 1
+        assert results[0].content == "全部null"
+        assert results[0].metadata.importance == 0  # 降级为默认 Metadata
+        assert results[0].vector is None

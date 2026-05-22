@@ -16,7 +16,20 @@ class SQLiteLogStorage:
 
     def _get_connection(self):
         # 允许在多线程环境下使用（结合我们的 AsyncDispatcher 极其重要）
-        return sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row  # 按列名访问，消除固定索引脆弱性
+        return conn
+
+    @staticmethod
+    def _safe_json(value, default):
+        """安全 JSON 解析：None/空串/无效 JSON 均返回默认值"""
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"⚠️ [SQLiteLog] JSON 解析失败，使用默认值: {e}")
+            return default
 
     def _init_db(self):
         """初始化表结构，如果不存在则创建"""
@@ -145,17 +158,15 @@ class SQLiteLogStorage:
             cursor = conn.execute(sql, params)
             return [self._row_to_item(row) for row in cursor.fetchall()]
 
-    def _row_to_item(self, row: tuple) -> MemoryItem:
-        """内部辅助：将数据库行转换为 MemoryItem 对象
-        列顺序: id, content, role, timestamp, stage, agent_id, metadata_json, vector_json
-        """
+    def _row_to_item(self, row) -> MemoryItem:
+        """将数据库行转为 MemoryItem，使用列名访问，安全 JSON 解析"""
         return MemoryItem(
-            id=row[0],
-            content=row[1],
-            role=MemoryRole(row[2]),
-            timestamp=datetime.fromisoformat(row[3]),
-            stage=MemoryStage(row[4]),
-            agent_id=row[5] if len(row) > 5 and row[5] else "default_agent",
-            metadata=json.loads(row[6]) if len(row) > 6 and row[6] else {},
-            vector=json.loads(row[7]) if len(row) > 7 and row[7] else None
+            id=row["id"],
+            content=row["content"],
+            role=MemoryRole(row["role"]),
+            timestamp=datetime.fromisoformat(row["timestamp"]),
+            stage=MemoryStage(row["stage"]),
+            agent_id=row["agent_id"] if "agent_id" in row.keys() and row["agent_id"] else "default_agent",
+            metadata=self._safe_json(row["metadata_json"], {}),
+            vector=self._safe_json(row["vector_json"], None)
         )

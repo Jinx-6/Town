@@ -124,19 +124,11 @@ async def run_demo():
         turn += 1
         print()
 
-        # ─── 1. 写入记忆 ───
-        ingest.process_message(
-            content=user_input,
-            role=MemoryRole.USER,
-            agent_id=agent_id,
-        )
-        time.sleep(0.5)  # 等待异步分发线程写入 SQLite / Vector
-
-        # ─── 2. 检索相关记忆 ───
+        # ─── 1. 先检索历史记忆（本轮输入尚未入库）───
         request = RetrievalRequest(query=user_input, limit=5, agent_id=agent_id)
         results = retrieve.retrieve(request, agent_id=agent_id)
 
-        # ─── 3. 调试：打印检索结果 ───
+        # ─── 2. 调试：打印检索结果 ───
         print(f"  ┌─ [Debug] 检索到 {len(results.results)} 条记忆")
         for i, mem in enumerate(results.results):
             source = str(mem.source)
@@ -144,7 +136,7 @@ async def run_demo():
             print(f"  │  {i+1}. [{source}] score={mem.score:.4f} | {content_preview}...")
         print(f"  └─")
 
-        # ─── 4. 组装上下文 → 生成回复 ───
+        # ─── 3. 组装上下文 → 生成回复 ───
         context_messages = assembler.assemble(user_input, results)
         full_messages = [{"role": "system", "content": base_system_prompt}] + context_messages
 
@@ -160,7 +152,13 @@ async def run_demo():
         print(response)
         print()
 
-        # ─── 5. 将智能体回复也存入记忆 ───
+        # ─── 4. 生成回复后，再将本轮对话写入记忆库，供后续轮次使用 ───
+        ingest.process_message(
+            content=user_input,
+            role=MemoryRole.USER,
+            agent_id=agent_id,
+        )
+        time.sleep(0.3)
         ingest.process_message(
             content=response,
             role=MemoryRole.ASSISTANT,
