@@ -4,13 +4,19 @@
 # @Software:PyCharm
 
 
+import sys
+from pathlib import Path
+
 import pytest
 from typing import Set
 
-# 导入你的系统核心组件
-from ..storage.graph_db import GraphStore
-from ..policies.update_policy import UpdatePolicy, UpdateAction
-from ..evaluation.metrics import RetrievalMetrics, GenerationMetrics
+pytest.importorskip("neo4j", reason="Neo4j driver not installed")
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from Memory.storage.graph_db import GraphStore
+from Memory.policies.update_policy import UpdatePolicy, UpdateAction
+from Memory.evaluation.metrics import RetrievalMetrics, GenerationMetrics
 
 
 # 模拟大模型客户端 (为了测试时不花钱，这里可以造个假的回声筒)

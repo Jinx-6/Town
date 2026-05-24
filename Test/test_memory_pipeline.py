@@ -8,6 +8,7 @@ import os
 import time
 import tempfile
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -287,10 +288,349 @@ class TestMemoryPipeline:
             f"写入后应能检索到当前输入，实际: {contents_after}"
         )
 
+    # ============================================================
+    # 测试 6：时间关键词检索 — "昨天"优先于"前天"
+    # ============================================================
+    def test_time_keyword_yesterday_first(self):
+        """查询含'昨天'时，时间匹配的昨天记忆应排在第一位"""
+        from demo_cli import apply_time_boost
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+
+        yesterday = now - timedelta(days=1)
+        day_before = now - timedelta(days=2)
+
+        item_gen = MemoryItem(
+            id="mem_yesterday", content="玩家昨天帮张三修理发电机",
+            role=MemoryRole.USER, agent_id="zhang_san", timestamp=yesterday,
+        )
+        item_water = MemoryItem(
+            id="mem_day_before", content="玩家前天帮张三买水",
+            role=MemoryRole.USER, agent_id="zhang_san", timestamp=day_before,
+        )
+
+        # 模拟检索返回两条得分相同的记忆（买水在前，发电机在后）
+        results = [
+            RetrievedMemory(item=item_water, score=0.75, source=BackendTarget.VECTOR),
+            RetrievedMemory(item=item_gen, score=0.75, source=BackendTarget.VECTOR),
+        ]
+
+        boosted = apply_time_boost("你还记得我昨天帮你做了什么吗", results)
+
+        assert "发电机" in boosted[0].item.content, (
+            f"查询'昨天'时，第一条结果应为发电机，实际: {boosted[0].item.content}"
+        )
+
+    def test_time_keyword_day_before_yesterday_first(self):
+        """查询含'前天'时，时间匹配的前天记忆应排在第一位"""
+        from demo_cli import apply_time_boost
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+
+        yesterday = now - timedelta(days=1)
+        day_before = now - timedelta(days=2)
+
+        item_gen = MemoryItem(
+            id="mem_yesterday", content="玩家昨天帮张三修理发电机",
+            role=MemoryRole.USER, agent_id="zhang_san", timestamp=yesterday,
+        )
+        item_water = MemoryItem(
+            id="mem_day_before", content="玩家前天帮张三买水",
+            role=MemoryRole.USER, agent_id="zhang_san", timestamp=day_before,
+        )
+
+        # 模拟检索返回两条得分相同的记忆（发电机在前，买水在后）
+        results = [
+            RetrievedMemory(item=item_gen, score=0.75, source=BackendTarget.VECTOR),
+            RetrievedMemory(item=item_water, score=0.75, source=BackendTarget.VECTOR),
+        ]
+
+        boosted = apply_time_boost("你还记得我前天帮你做了什么吗", results)
+
+        assert "买水" in boosted[0].item.content, (
+            f"查询'前天'时，第一条结果应为买水，实际: {boosted[0].item.content}"
+        )
+
+    # ============================================================
+    # 测试 7：时间冲突过滤 + 噪音问句排除
+    # ============================================================
+    def test_time_conflict_and_noise_filtering(self):
+        """查询'前天'时：饮水机排第一，问句噪音被排除"""
+        from demo_cli import apply_time_boost
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+
+        item_gen = MemoryItem(
+            id="mem_gen", content="我昨天帮你修了发电机",
+            role=MemoryRole.USER, agent_id="zhang_san",
+            timestamp=now - timedelta(days=1),
+        )
+        item_water = MemoryItem(
+            id="mem_water", content="我前天帮你修了饮水机",
+            role=MemoryRole.USER, agent_id="zhang_san",
+            timestamp=now - timedelta(days=2),
+        )
+        item_noise = MemoryItem(
+            id="mem_noise", content="我昨天帮你做了什么",
+            role=MemoryRole.USER, agent_id="zhang_san",
+            timestamp=now - timedelta(days=1),
+        )
+
+        # 模拟检索返回三条（噪音排第一，饮水机排最后）
+        results = [
+            RetrievedMemory(item=item_noise, score=0.80, source=BackendTarget.VECTOR),
+            RetrievedMemory(item=item_gen, score=0.75, source=BackendTarget.VECTOR),
+            RetrievedMemory(item=item_water, score=0.70, source=BackendTarget.VECTOR),
+        ]
+
+        boosted = apply_time_boost("我前天帮你做了什么", results)
+
+        # 断言 1：第一条结果包含"饮水机"
+        assert "饮水机" in boosted[0].item.content, (
+            f"查询'前天'时，第一条结果应为饮水机，实际: {boosted[0].item.content}"
+        )
+
+        # 断言 2：问句噪音「昨天帮你做了什么」不应排在真实记忆前面
+        contents_top2 = [r.item.content for r in boosted[:2]]
+        noise_in_top2 = any("昨天帮你做了什么" in c for c in contents_top2)
+        assert not noise_in_top2, (
+            f"问句噪音不应进入前2条，实际前2: {contents_top2}"
+        )
+
 
 # ============================================================
-# 回归测试：旧数据库兼容性 & JSON 容错
+# 元数据提取回归测试
 # ============================================================
+class TestMetadataExtraction:
+    """验证基于规则的元数据提取正确性"""
+
+    def test_extract_event_with_time(self):
+        """'我前天帮你修了饮水机' → event + repair + 前天"""
+        from Memory.processor.metadata_extractor import extract_metadata
+        meta = extract_metadata("我前天帮你修了饮水机")
+        assert meta["memory_type"] == "event"
+        assert meta["is_factual_memory"] is True
+        assert meta["relative_time"] == "前天"
+        assert meta["temporal_text"] == "前天"
+        assert meta["event_type"] == "repair"
+        assert "饮水机" in meta["keywords"]
+
+    def test_extract_query_detection(self):
+        """'我昨天帮你做了什么？' → query + is_factual_memory=false"""
+        from Memory.processor.metadata_extractor import extract_metadata
+        meta = extract_metadata("我昨天帮你做了什么？")
+        assert meta["memory_type"] == "query"
+        assert meta["is_factual_memory"] is False
+        assert meta["event_type"] == "ask"
+
+    def test_extract_buy_event(self):
+        """'我昨天帮你买了一瓶水' → event + buy + 昨天"""
+        from Memory.processor.metadata_extractor import extract_metadata
+        meta = extract_metadata("我昨天帮你买了一瓶水")
+        assert meta["memory_type"] == "event"
+        assert meta["is_factual_memory"] is True
+        assert meta["relative_time"] == "昨天"
+        assert meta["event_type"] == "buy"
+
+    def test_extract_no_time(self):
+        """无时间词的内容 → relative_time 为空字符串"""
+        from Memory.processor.metadata_extractor import extract_metadata
+        meta = extract_metadata("进喜说他最喜欢的语言是 Python")
+        assert meta["relative_time"] == ""
+        assert meta["memory_type"] == "event"
+        assert meta["is_factual_memory"] is True
+
+    def test_existing_meta_not_overwritten(self):
+        """用户显式传入的元数据不被覆盖"""
+        from Memory.processor.metadata_extractor import extract_metadata
+        existing = {"memory_type": "preference", "is_factual_memory": True}
+        meta = extract_metadata("我昨天帮你做了什么？", existing_meta=existing)
+        assert meta["memory_type"] == "preference"  # 保持原值
+        assert meta["is_factual_memory"] is True    # 保持原值
+        assert meta["relative_time"] == "昨天"      # 补充缺失字段
+
+
+class TestMetadataInPipeline:
+    """验证元数据在记忆流水线中端到端生效"""
+
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.tmpdir, "test_meta.db")
+        self.cache = WorkingMemoryCache()
+        self.sqlite = SQLiteLogStorage(db_path=self.db_path)
+        self.mock_vector = MockVectorStore()
+        self.router = WriteRouter()
+        self.update_policy = UpdatePolicy()
+        self.scorer = MemoryScorer()
+        self.retrieval_policy = RetrievalPolicy()
+        self.backends = {
+            BackendTarget.SQLITE: self.sqlite,
+            BackendTarget.VECTOR: self.mock_vector,
+        }
+        self.dispatcher = AsyncDispatcher(
+            backends=self.backends, extractor=None, conflict_resolver=None,
+            index_manager=None, update_policy=self.update_policy,
+        )
+        self.ingest = IngestHub(
+            working_cache=self.cache, router=self.router, dispatcher=self.dispatcher
+        )
+        self.planner = MagicMock()
+        self.retrieve = RetrieveHub(
+            planner=self.planner, cache=self.cache, sqlite=self.sqlite,
+            vector_store=self.mock_vector, graph_store=None,
+            scorer=self.scorer, policy=self.retrieval_policy,
+        )
+        self.assembler = PromptAssembler(agent_name="张三")
+
+    def teardown_method(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write(self, content, agent_id="zhang_san", role=MemoryRole.USER):
+        self.ingest.process_message(content=content, role=role, agent_id=agent_id)
+        time.sleep(0.3)
+
+    def _mock_plan(self, search_query):
+        plan = RetrievalPlan(
+            original_query="test", instructions=[
+                RetrievalInstruction(intent="test", search_query=search_query,
+                                     keywords=[], time_filter="all")
+            ],
+        )
+        self.planner.generate_plan.return_value = plan
+
+    def test_query_memory_excluded_from_context(self):
+        """问句记忆不应出现在 PromptAssembler 上下文中"""
+        # 存入一条问句 + 一条事件
+        self._write("我昨天帮你做了什么？", agent_id="zhang_san")
+        self._write("我昨天帮你修了发电机", agent_id="zhang_san")
+
+        self._mock_plan(search_query="昨天 帮 修 发电机")
+        req = RetrievalRequest(query="我昨天帮你做了什么", limit=5,
+                               agent_id="zhang_san")
+        result = self.retrieve.retrieve(req, agent_id="zhang_san")
+
+        # PromptAssembler 应只包含 factual 记忆
+        messages = self.assembler.assemble(req.query, result)
+        system_content = messages[0]["content"]
+
+        assert "发电机" in system_content, (
+            f"事件记忆应出现在上下文中，实际: {system_content[:200]}"
+        )
+        assert "我昨天帮你做了什么？" not in system_content.replace(" ", ""), (
+            f"问句记忆不应出现在上下文中，实际: {system_content[:200]}"
+        )
+
+    def test_old_memory_without_metadata_still_works(self):
+        """旧记忆（无新元数据字段）仍能正常检索与组装"""
+        item = MemoryItem(
+            id="old_no_meta", content="玩家昨天帮张三修好了发电机",
+            role=MemoryRole.USER, agent_id="zhang_san",
+            # metadata 用默认值（新字段均为默认值）
+        )
+        retrieved = RetrievedMemory(
+            item=item, score=0.85, source=BackendTarget.VECTOR
+        )
+        response = RetrievalResponse(
+            original_query="昨天帮了什么", agent_id="zhang_san",
+            results=[retrieved],
+        )
+        messages = self.assembler.assemble("昨天帮了什么", response)
+        system_content = messages[0]["content"]
+        # 旧记忆 is_factual_memory 默认为 True，应正常出现
+        assert "发电机" in system_content, (
+            f"旧记忆应正常出现在上下文中，实际: {system_content[:200]}"
+        )
+
+    def test_query_memory_still_stored_but_not_assembled(self):
+        """问句记忆被存储（is_factual_memory=False），但不被拼入上下文"""
+        self._write("我前天帮你修了饮水机", agent_id="zhang_san")
+        self._write("我昨天帮你做了什么？", agent_id="zhang_san")
+
+        # 验证 SQLite 中两条都在
+        records = self.sqlite.list_recent(limit=10)
+        assert len(records) >= 2
+
+        # 检索「前天」
+        self._mock_plan(search_query="前天 修 饮水机")
+        req = RetrievalRequest(query="我前天帮你做了什么", limit=5,
+                               agent_id="zhang_san")
+        result = self.retrieve.retrieve(req, agent_id="zhang_san")
+
+        # 拼入上下文 — 问句不应出现
+        messages = self.assembler.assemble(req.query, result)
+        system_content = messages[0]["content"]
+
+        assert "饮水机" in system_content, (
+            f"前天的事件记忆应出现在上下文中"
+        )
+        noise_free = "昨天帮你做了什么" not in system_content.replace(" ", "")
+        assert noise_free, (
+            f"问句不应出现在上下文中，实际: {system_content[:200]}"
+        )
+
+    def test_factual_recall_excludes_query_from_events(self):
+        """事实召回：事件记忆在 factual_event_memory 区，问句在 previous_user_questions 区"""
+        self._write("我前天帮你修了饮水机", agent_id="zhang_san")
+        self._write("我昨天帮你做了什么？", agent_id="zhang_san")
+
+        self._mock_plan(search_query="前天 帮 修 饮水机")
+        req = RetrievalRequest(query="我前天帮你做了什么？", limit=5,
+                               agent_id="zhang_san", score_threshold=0.4)
+        result = self.retrieve.retrieve(req, agent_id="zhang_san")
+
+        from demo_cli import apply_time_boost, detect_query_intent
+        intent = detect_query_intent("我前天帮你做了什么？")
+        assert intent == "factual_event_recall", f"应为 factual_event_recall，实际: {intent}"
+
+        apply_time_boost("我前天帮你做了什么？", result.results)
+        messages = self.assembler.assemble(req.query, result)
+        system_content = messages[0]["content"]
+
+        # 断言 1: factual_event_memory 区包含饮水机事件
+        assert "饮水机" in system_content, f"事件应在 factual 区: {system_content[:300]}"
+
+        # 断言 2: 如果 factual_event_memory 区存在，不包含问句
+        if "<factual_event_memory>" in system_content:
+            fact_section_start = system_content.find("<factual_event_memory>")
+            next_section = system_content.find("<previous_user_questions>", fact_section_start)
+            if next_section == -1:
+                next_section = system_content.find("<task_state>", fact_section_start)
+            if next_section == -1:
+                next_section = len(system_content)
+            fact_section = system_content[fact_section_start:next_section]
+            assert "昨天帮你做了什么" not in fact_section.replace(" ", ""), (
+                f"问句不应在 factual_event_memory 区: {fact_section[:200]}"
+            )
+
+    def test_interaction_history_recall_includes_queries(self):
+        """交互历史召回：问句应出现在 previous_user_questions 区"""
+        from demo_cli import detect_query_intent
+
+        # 验证意图检测
+        intent1 = detect_query_intent("我之前问过你什么？")
+        assert intent1 == "interaction_history_recall", f"应为 interaction_history_recall，实际: {intent1}"
+
+        intent2 = detect_query_intent("我之前聊过类似的问题吗")
+        assert intent2 == "interaction_history_recall", f"应为 interaction_history_recall，实际: {intent2}"
+
+    def test_query_intent_factual_vs_interaction(self):
+        """对比：事实召回 vs 交互历史召回的意图检测"""
+        from demo_cli import detect_query_intent
+
+        # 事实召回
+        assert detect_query_intent("你还记得我昨天帮你做了什么吗") == "factual_event_recall"
+        assert detect_query_intent("我做了什么") == "factual_event_recall"
+        assert detect_query_intent("帮我做了什么") == "factual_event_recall"
+
+        # 交互历史
+        assert detect_query_intent("我之前问过什么") == "interaction_history_recall"
+        assert detect_query_intent("上次聊过什么") == "interaction_history_recall"
+
+        # 通用
+        assert detect_query_intent("你好") == "general_recall"
+        assert detect_query_intent("天气怎么样") == "general_recall"
+
+
 class TestSQLiteRowCompat:
     """验证 _row_to_item 对旧 schema / 脏数据的容错能力"""
 

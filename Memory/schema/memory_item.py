@@ -18,15 +18,27 @@ class MemoryStage(str, Enum):
     SEMANTIC = "semantic"
 
 
-# 🔥 升级点 1：将宽泛的 dict 升级为严格的 BaseModel
-# 这样就可以利用 Pydantic 对元数据进行极值限制
 class MemoryMetadata(BaseModel):
+    # ── 原有字段 ──
     importance: int = Field(default=0, ge=0, le=10, description="重要度评分 (0-10)")
     location: str = Field(default="unknown", description="发生地点")
     entities: List[str] = Field(default_factory=list, description="提取出的实体")
     tokens: int = Field(default=0, ge=0, description="Token消耗统计")
-    # ✨ 新增：预留扩展位，用于存储不可预见的额外信息
     extra_info: Dict[str, Any] = Field(default_factory=dict, description="其他扩展元数据")
+
+    # ── 新增：轻量级结构化元数据 ──
+    memory_type: str = Field(default="unknown",
+        description="记忆类型: event/query/dialogue/preference/fact/unknown")
+    temporal_text: str = Field(default="",
+        description="原始时间词，如 '昨天'、'前天'、'今天上午'")
+    relative_time: str = Field(default="",
+        description="标准化相对时间: 昨天/前天/今天/最近")
+    keywords: List[str] = Field(default_factory=list,
+        description="提取的重要词汇")
+    event_type: str = Field(default="",
+        description="事件类型: help/repair/buy/ask/general")
+    is_factual_memory: bool = Field(default=True,
+        description="是否为事实记忆；问句为 False")
 
 
 class MemoryItem(BaseModel):

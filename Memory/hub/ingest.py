@@ -3,10 +3,11 @@
 # @File    :ingest.py
 
 from typing import Dict, Any, Optional,List
-from ..schema.memory_item import MemoryItem, MemoryRole, MemoryStage
+from ..schema.memory_item import MemoryItem, MemoryRole, MemoryStage, MemoryMetadata
 from ..schema.routing import BackendTarget
 from ..schema.events import MemoryWriteEvent
 from ..processor.router import WriteRouter
+from ..processor.metadata_extractor import extract_metadata
 from ..hub.async_dispatcher import AsyncDispatcher
 from ..storage.working_cache import WorkingMemoryCache
 
@@ -42,6 +43,15 @@ class IngestHub:
         meta = metadata or {}
         if "confidence" not in meta:
             meta["confidence"] = confidence
+
+        # 1.5 规则元数据提取（不覆盖用户显式传入的值）
+        try:
+            extracted = extract_metadata(content, existing_meta=meta)
+            for k, v in extracted.items():
+                if k not in meta or meta.get(k) in (None, "", [], False):
+                    meta[k] = v
+        except Exception:
+            pass  # 提取失败不阻塞写入
 
         item = MemoryItem(
             id=f"mem_{int(time.time() * 1000)}",
