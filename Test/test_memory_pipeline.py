@@ -10,6 +10,7 @@ import tempfile
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional, Dict, Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -49,13 +50,25 @@ class MockVectorStore:
     def add(self, item: MemoryItem):
         self.items[item.id] = item
 
-    def search(self, query: str, agent_id: str, limit: int = 5) -> list[RetrievedMemory]:
+    def search(self, query: str, agent_id: str, limit: int = 5,
+               metadata_filters: Optional[Dict[str, Any]] = None) -> list[RetrievedMemory]:
         results = []
         for item in self.items.values():
-            if item.agent_id == agent_id:
-                results.append(RetrievedMemory(
-                    item=item, score=0.85, source=BackendTarget.VECTOR
-                ))
+            if item.agent_id != agent_id:
+                continue
+            # 可选 metadata 过滤
+            if metadata_filters:
+                meta = item.metadata if isinstance(item.metadata, dict) else item.metadata.model_dump()
+                skip = False
+                for k, v in metadata_filters.items():
+                    if meta.get(k) != v:
+                        skip = True
+                        break
+                if skip:
+                    continue
+            results.append(RetrievedMemory(
+                item=item, score=0.85, source=BackendTarget.VECTOR
+            ))
         return results[:limit]
 
 
@@ -569,7 +582,7 @@ class TestMetadataInPipeline:
         )
 
     def test_factual_recall_excludes_query_from_events(self):
-        """事实召回：事件记忆在 factual_event_memory 区，问句在 previous_user_questions 区"""
+        """事实召回：事件记忆在 retrieved_factual_memories 区，问句在 retrieved_dialog_history 区"""
         self._write("我前天帮你修了饮水机", agent_id="zhang_san")
         self._write("我昨天帮你做了什么？", agent_id="zhang_san")
 
@@ -586,24 +599,24 @@ class TestMetadataInPipeline:
         messages = self.assembler.assemble(req.query, result)
         system_content = messages[0]["content"]
 
-        # 断言 1: factual_event_memory 区包含饮水机事件
+        # 断言 1: retrieved_factual_memories 区包含饮水机事件
         assert "饮水机" in system_content, f"事件应在 factual 区: {system_content[:300]}"
 
-        # 断言 2: 如果 factual_event_memory 区存在，不包含问句
-        if "<factual_event_memory>" in system_content:
-            fact_section_start = system_content.find("<factual_event_memory>")
-            next_section = system_content.find("<previous_user_questions>", fact_section_start)
+        # 断言 2: 如果 retrieved_factual_memories 区存在，不包含问句
+        if "<retrieved_factual_memories>" in system_content:
+            fact_section_start = system_content.find("<retrieved_factual_memories>")
+            next_section = system_content.find("<retrieved_dialog_history>", fact_section_start)
             if next_section == -1:
-                next_section = system_content.find("<task_state>", fact_section_start)
+                next_section = system_content.find("<task_context>", fact_section_start)
             if next_section == -1:
                 next_section = len(system_content)
             fact_section = system_content[fact_section_start:next_section]
             assert "昨天帮你做了什么" not in fact_section.replace(" ", ""), (
-                f"问句不应在 factual_event_memory 区: {fact_section[:200]}"
+                f"问句不应在 retrieved_factual_memories 区: {fact_section[:200]}"
             )
 
     def test_interaction_history_recall_includes_queries(self):
-        """交互历史召回：问句应出现在 previous_user_questions 区"""
+        """交互历史召回：问句应出现在 retrieved_dialog_history 区"""
         from demo_cli import detect_query_intent
 
         # 验证意图检测

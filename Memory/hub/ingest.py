@@ -2,9 +2,9 @@
 # @Author  :进喜
 # @File    :ingest.py
 
-from typing import Dict, Any, Optional,List
+from typing import Dict, Any, Optional, List
 from ..schema.memory_item import MemoryItem, MemoryRole, MemoryStage, MemoryMetadata
-from ..schema.routing import BackendTarget
+from ..schema.routing import BackendTarget, IntentType
 from ..schema.events import MemoryWriteEvent
 from ..processor.router import WriteRouter
 from ..processor.metadata_extractor import extract_metadata
@@ -35,23 +35,33 @@ class IngestHub:
             role: MemoryRole,
             metadata: Optional[Dict[str, Any]] = None,
             confidence: float = 1.0,
-            agent_id: str = "default"  # ✨ 确保 API 传入了正确的居民 ID
+            agent_id: str = "default",
+            intent_type: Optional[str] = None
     ) -> MemoryItem:
         import time
 
-        # 1. 组装标准记忆实体
         meta = metadata or {}
         if "confidence" not in meta:
             meta["confidence"] = confidence
 
-        # 1.5 规则元数据提取（不覆盖用户显式传入的值）
+        # 意图驱动的 metadata 设置（不覆盖用户显式传入）
+        if intent_type and "memory_type" not in meta:
+            _intent_mtype = {
+                "fact_statement": "event",
+                "task_instruction": "task",
+                "qa_query": "query",
+                "chitchat": "dialogue",
+            }
+            meta["memory_type"] = _intent_mtype.get(intent_type, "event")
+            meta["is_factual_memory"] = intent_type == "fact_statement"
+
         try:
             extracted = extract_metadata(content, existing_meta=meta)
             for k, v in extracted.items():
                 if k not in meta or meta.get(k) in (None, "", [], False):
                     meta[k] = v
         except Exception:
-            pass  # 提取失败不阻塞写入
+            pass
 
         item = MemoryItem(
             id=f"mem_{int(time.time() * 1000)}",
@@ -59,17 +69,16 @@ class IngestHub:
             role=role,
             metadata=meta,
             stage=MemoryStage.SENSORY,
-            agent_id=agent_id  # ✨ 核心：给记忆碎片打上归属标签
+            agent_id=agent_id
         )
 
-        # 2. 智能路由决策
-        decision = self.router.route(item)
+        # 意图驱动路由
+        route_intent = IntentType(intent_type) if intent_type else None
+        decision = self.router.route(item, intent_type=route_intent)
 
-        # 3. L0 缓存同步拦截
         if BackendTarget.CACHE in decision.targets:
             self.cache.add(item)
 
-        # 4. 🚀 抛出异步写入事件
         async_targets = [t for t in decision.targets if t != BackendTarget.CACHE]
         if async_targets:
             write_event = MemoryWriteEvent(
@@ -77,7 +86,6 @@ class IngestHub:
                 targets=async_targets,
                 confidence=meta["confidence"]
             )
-            # 这里的 item 已经包含了 agent_id，后续 Dispatcher 会将其传给存储后端
             self.dispatcher.publish(write_event)
 
         return item

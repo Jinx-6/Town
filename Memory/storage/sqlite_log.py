@@ -158,6 +158,40 @@ class SQLiteLogStorage:
             cursor = conn.execute(sql, params)
             return [self._row_to_item(row) for row in cursor.fetchall()]
 
+    def search_with_metadata(self, query: str, agent_id: str = None, limit: int = 5,
+                             metadata_filters: Optional[Dict[str, Any]] = None) -> List[MemoryItem]:
+        """关键词搜索 + metadata 字段硬性过滤（json_extract）。"""
+        words = [w for w in query.split() if len(w) >= 1]
+        if not words:
+            return []
+
+        clauses = ["(" + " OR ".join(["content LIKE ?"] * len(words)) + ")"]
+        params = [f"%{w}%" for w in words]
+
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+
+        if metadata_filters:
+            for key, value in metadata_filters.items():
+                if isinstance(value, bool):
+                    clauses.append(f"json_extract(metadata_json, '$.{key}') = ?")
+                    params.append(1 if value else 0)
+                elif isinstance(value, str):
+                    clauses.append(f"json_extract(metadata_json, '$.{key}') = ?")
+                    params.append(value)
+                elif isinstance(value, int):
+                    clauses.append(f"json_extract(metadata_json, '$.{key}') = ?")
+                    params.append(value)
+
+        sql = "SELECT * FROM episodic_memory WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(sql, params)
+            return [self._row_to_item(row) for row in cursor.fetchall()]
+
     def _row_to_item(self, row) -> MemoryItem:
         """将数据库行转为 MemoryItem，使用列名访问，安全 JSON 解析"""
         return MemoryItem(

@@ -38,7 +38,15 @@ class RetrievalRequest(BaseModel):
         description="检索目标库"
     )
     score_threshold: float = Field(default=0.7, description="最低相似度门槛")
-    metadata_filters: Optional[Dict[str, Any]] = Field(default=None)
+    metadata_filters: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Metadata 过滤条件，传给后端执行硬性过滤。"
+                    "例: {'is_factual_memory': True, 'memory_type': 'event'}"
+    )
+    rewritten_queries: Optional[List[str]] = Field(
+        default=None,
+        description="意图分类器产出的重写查询列表；非空时跳过 QueryPlanner，每条直接映射为一条 RetrievalInstruction"
+    )
 
 
 # ==========================================

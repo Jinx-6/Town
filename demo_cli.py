@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from Memory.schema.memory_item import MemoryRole
 from Memory.schema.routing import BackendTarget
-from Memory.schema.retrieval import RetrievalRequest, RetrievedMemory
+from Memory.schema.retrieval import RetrievalRequest, RetrievedMemory, RetrievalResponse
 
 from Memory.storage.working_cache import WorkingMemoryCache
 from Memory.storage.sqlite_log import SQLiteLogStorage
@@ -37,6 +37,8 @@ from Memory.processor.assembler import PromptAssembler
 from Memory.hub.async_dispatcher import AsyncDispatcher
 from Memory.hub.ingest import IngestHub
 from Memory.hub.retrieve import RetrieveHub
+
+from Memory.processor.intent_classifier import create_intent_classifier
 
 from LLMClient import LLMClient
 
@@ -255,8 +257,8 @@ def print_debug_retrieval(query: str, results_pre_boost: list, results_post_boos
                 content = msg["content"]
                 # 提取各 section
                 sections = [
-                    "<factual_event_memory>", "<previous_user_questions>",
-                    "<task_state>", "<recent_dialogue>", "<other_memory>"
+                    "<retrieved_factual_memories>", "<retrieved_dialog_history>",
+                    "<task_context>", "<recent_chitchat>", "<other_memory>"
                 ]
                 for sec in sections:
                     if sec in content:
@@ -401,6 +403,7 @@ async def run_demo():
 
     llm = LLMClient()
     assembler = PromptAssembler(agent_name=agent_name)
+    classifier = create_intent_classifier(use_llm=False)
 
     base_system_prompt = (
         f"你是{agent_name}，一位{agent_role}。"
@@ -435,39 +438,57 @@ async def run_demo():
         turn += 1
         print()
 
-        # ─── 1. 先检索历史记忆（本轮输入尚未入库）───
-        request = RetrievalRequest(query=user_input, limit=5, agent_id=agent_id)
-        results = retrieve.retrieve(request, agent_id=agent_id)
-
-        # 保存 boost 前的快照（用于调试对比）
-        pre_boost_snapshot = [RetrievedMemory(item=r.item, score=r.score, source=r.source)
-                              for r in results.results]
-
-        # ─── 2. 时间关键词加分重排 ───
-        results.results = apply_time_boost(user_input, results.results)
-
-        # ─── 3. 调试：打印检索结果 ───
+        # ─── 1. 意图分类 ───
+        intent = classifier.classify(user_input)
         if do_debug:
-            # 先组装上下文用于调试输出
-            context_messages = assembler.assemble(user_input, results)
-            print_debug_retrieval(
-                query=user_input,
-                results_pre_boost=pre_boost_snapshot,
-                results_post_boost=results.results,
-                assembler_context=context_messages,
-            )
-        else:
-            print(f"  ┌─ [Debug] 检索到 {len(results.results)} 条记忆")
-            for i, mem in enumerate(results.results):
-                source = str(mem.source)
-                content_preview = mem.item.content[:60].replace("\n", " ")
-                print(f"  │  {i+1}. [{source}] score={mem.score:.4f} | {content_preview}...")
+            print(f"  ┌─ [Intent] {intent.intent_type} | {intent.reasoning}")
+            if intent.rewritten_queries:
+                print(f"  │  rewritten_queries: {intent.rewritten_queries}")
             print(f"  └─")
 
-        # ─── 4. 组装上下文 → 生成回复 ───
+        # ─── 2. 根据意图分流检索 ───
+        if intent.intent_type == "chitchat":
+            # 闲聊：跳过检索，仅取短期缓存
+            cache.get_recent(5)  # 保持缓存活跃
+            results = RetrievalResponse(original_query=user_input, agent_id=agent_id)
+            context_messages = assembler.assemble(user_input, results)
+            pre_boost_snapshot = []
+
+        else:
+            # 构建检索请求
+            req_kwargs = dict(query=user_input, limit=5, agent_id=agent_id)
+            if intent.intent_type == "qa_query":
+                req_kwargs["metadata_filters"] = {"is_factual_memory": True}
+                if intent.rewritten_queries:
+                    req_kwargs["rewritten_queries"] = intent.rewritten_queries
+            request = RetrievalRequest(**req_kwargs)
+            results = retrieve.retrieve(request, agent_id=agent_id)
+
+            pre_boost_snapshot = [RetrievedMemory(item=r.item, score=r.score, source=r.source)
+                                  for r in results.results]
+
+            results.results = apply_time_boost(user_input, results.results)
+
+            # 调试输出
+            if do_debug:
+                context_messages = assembler.assemble(user_input, results)
+                print_debug_retrieval(
+                    query=user_input,
+                    results_pre_boost=pre_boost_snapshot,
+                    results_post_boost=results.results,
+                    assembler_context=context_messages,
+                )
+            else:
+                print(f"  ┌─ [Debug] 检索到 {len(results.results)} 条记忆")
+                for i, mem in enumerate(results.results):
+                    source = str(mem.source)
+                    content_preview = mem.item.content[:60].replace("\n", " ")
+                    print(f"  │  {i+1}. [{source}] score={mem.score:.4f} | {content_preview}...")
+                print(f"  └─")
+
+        # ─── 3. 组装上下文 → 生成回复 ───
         if not do_debug:
             context_messages = assembler.assemble(user_input, results)
-        full_messages = [{"role": "system", "content": base_system_prompt}] + context_messages
 
         print(f"\n{agent_name} > ", end="", flush=True)
         try:
@@ -481,11 +502,12 @@ async def run_demo():
         print(response)
         print()
 
-        # ─── 5. 生成回复后，再将本轮对话写入记忆库，供后续轮次使用 ───
+        # ─── 4. 写入记忆（带意图标签）───
         ingest.process_message(
             content=user_input,
             role=MemoryRole.USER,
             agent_id=agent_id,
+            intent_type=intent.intent_type,
         )
         time.sleep(0.3)
         ingest.process_message(

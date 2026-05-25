@@ -8,7 +8,15 @@
       "Bash(python *)",
       "Bash(Select-String \".env\")",
       "Bash(git rm *)",
-      "Bash(bash *)"
+      "Bash(bash *)",
+      "Bash(grep -E \"\\\\.\\(db|sqlite|sqlite3\\)$\")",
+      "Bash(Remove-Item _demo_e2e_test.py -Force)",
+      "Bash(del *)",
+      "Bash(npx skills *)",
+      "Bash(pytest *)",
+      "Bash(dir D:\\\\DTcoding\\\\Hello-Agents\\\\Town *)",
+      "Bash(dir D:\\\\DTcoding\\\\Hello-Agents\\\\Town\\\\Memory *)",
+      "Bash(dir *)"
     ]
   }
 }

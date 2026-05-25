@@ -43,17 +43,26 @@ class RetrieveHub:
         self.policy = policy
 
     def retrieve(self, request: RetrievalRequest, agent_id: str) -> RetrievalResponse:
-        """
-        ✨ 修改点 1：入口处强制要求传入 agent_id
-        """
-        plan: RetrievalPlan = self.planner.generate_plan(request.query)
+        # 多查询融合：若 rewritten_queries 非空，直接映射为指令，跳过 QueryPlanner
+        if request.rewritten_queries:
+            instructions = [
+                RetrievalInstruction(
+                    intent="重写查询融合",
+                    search_query=q,
+                    keywords=[]
+                )
+                for q in request.rewritten_queries
+            ]
+        else:
+            plan: RetrievalPlan = self.planner.generate_plan(request.query)
+            instructions = plan.instructions
+
         master_results: Dict[str, RetrievedMemory] = {}
 
         # 获取配额
         quotas = self.policy.calculate_quotas(request.limit)
 
-        for instruction in plan.instructions:
-            # ✨ 修改点 2：执行指令时，将 agent_id 向下传递
+        for instruction in instructions:
             sub_results = self._execute_instruction(instruction, request, quotas, agent_id)
 
             for res in sub_results:
@@ -102,7 +111,11 @@ class RetrieveHub:
         # --- B. 检索 L1 SQLite 情景记忆 ---
         if self.sqlite and BackendTarget.SQLITE in allowed_targets:
             sqlite_limit = quotas.get(BackendTarget.SQLITE, 2)
-            logs = self.sqlite.search_text(query=ins.search_query, agent_id=agent_id, limit=sqlite_limit)
+            mf = request.metadata_filters
+            logs = self.sqlite.search_with_metadata(
+                query=ins.search_query, agent_id=agent_id, limit=sqlite_limit,
+                metadata_filters=mf
+            )
             for log_item in logs:
                 self._upsert_sub_result(local_results, log_item, 0.6, BackendTarget.SQLITE)
 
@@ -115,7 +128,8 @@ class RetrieveHub:
             vec_hits = self.vector_store.search(
                 query=ins.search_query,
                 limit=vector_limit,
-                agent_id=agent_id
+                agent_id=agent_id,
+                metadata_filters=request.metadata_filters
             )
 
             for v_res in vec_hits:

@@ -10,13 +10,14 @@
 """
 import chromadb
 import json
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 # ✨ 注意：这里导入的是你定义的 RetrievedMemory 和 BackendTarget
 from ..schema.memory_item import MemoryItem, MemoryRole, MemoryStage
 from ..schema.retrieval import RetrievedMemory
 from ..schema.routing import BackendTarget
+from ..processor.chroma_metadata_helper import sanitize_for_chroma, normalize_for_sqlite
 import chromadb.utils.embedding_functions as embedding_functions
 
 class VectorStore:
@@ -40,21 +41,22 @@ class VectorStore:
         )
 
     def add(self, item: MemoryItem):
-        """
-        向向量库添加记忆，强制写入 agent_id。
-        """
+        """向向量库添加记忆，扁平化 metadata 字段以支持 ChromaDB where 过滤。"""
         role_str = getattr(item.role, 'value', item.role)
+        meta_dict = item.metadata if isinstance(item.metadata, dict) else item.metadata.model_dump()
 
-        # 构造元数据，加入 agent_id 以实现隔离
-        chroma_metadata = {
-            "agent_id": item.agent_id,  # 👈 身份标签
+        chroma_metadata = sanitize_for_chroma({
+            "agent_id": item.agent_id,
             "role": role_str,
             "stage": MemoryStage.SEMANTIC.value,
             "timestamp": item.timestamp.isoformat(),
-            # 兼容处理 metadata 字典或 Pydantic 对象
-            "metadata_json": json.dumps(
-                item.metadata if isinstance(item.metadata, dict) else item.metadata.model_dump())
-        }
+            "memory_type": meta_dict.get("memory_type", "unknown"),
+            "event_type": meta_dict.get("event_type", ""),
+            "is_factual_memory": meta_dict.get("is_factual_memory", True),
+            "relative_time": meta_dict.get("relative_time", ""),
+            "importance": meta_dict.get("importance", 0),
+            "metadata_json": json.dumps(normalize_for_sqlite(meta_dict))
+        })
 
         self.collection.add(
             documents=[item.content],
@@ -62,15 +64,30 @@ class VectorStore:
             ids=[item.id]
         )
 
-    def search(self, query: str, agent_id: str, limit: int = 5) -> List[RetrievedMemory]:
+    def search(self, query: str, agent_id: str, limit: int = 5,
+               metadata_filters: Optional[Dict[str, Any]] = None) -> List[RetrievedMemory]:
         """
-        ✨ 改造完成：使用 RetrievedMemory 封装返回结果
+        语义检索，支持可选的 metadata 硬性过滤。
         """
-        # 使用 where 子句实现身份隔离
+        conditions = [{"agent_id": agent_id}]
+
+        if metadata_filters:
+            for key, value in metadata_filters.items():
+                if key == "keywords":
+                    continue
+                if isinstance(value, (bool, str, int, float)):
+                    conditions.append({key: value})
+
+        # ChromaDB 单条件直接传 dict，多条件必须用 $and
+        if len(conditions) == 1:
+            where_clause = conditions[0]
+        else:
+            where_clause = {"$and": conditions}
+
         results = self.collection.query(
             query_texts=[query],
             n_results=limit,
-            where={"agent_id": agent_id}  # 👈 核心：只看属于该 Agent 的档案
+            where=where_clause
         )
 
         retrieval_results = []
