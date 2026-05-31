@@ -1,12 +1,6 @@
 # @Time    :2026/4/14 13:14
-# @Author  :进喜
+# @Author  :jinxi
 # @File    :LLMClient.py
-# @Software:PyCharm
-
-
-# @Time    :2026/4/14
-# @Author  :进喜
-# @File    :llm_client.py
 # @Software:PyCharm
 
 from openai import AsyncOpenAI
@@ -14,10 +8,9 @@ from config import settings
 
 
 class LLMClient:
-    """大模型统一转接头 (目前对接本地 Ollama)"""
+    """LLM abstraction layer (Ollama via OpenAI-compatible API)."""
 
     def __init__(self):
-        # 使用 OpenAI 兼容模式连接本地 11434 端口
         self.client = AsyncOpenAI(
             api_key=settings.ollama_api_key,
             base_url=settings.ollama_base_url
@@ -25,21 +18,86 @@ class LLMClient:
         self.model = settings.ollama_model_id
 
     async def generate(self, system_prompt: str, messages: list) -> str:
-        """
-        这就是为你 relationship.py 和 agent.py 量身定制的万能接口！
-        不论底层是大模型怎么换，这里的入参和出参永远不变。
-        """
-        # 组装完整的对话上下文，将 System Prompt 放在列表最前面
+        """Plain text generation — no tool use."""
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=full_messages,
-                temperature=0.7  # 控制回答的发散度
+                temperature=0.7
             )
-            # 剥洋葱一样把核心文本提取出来返回
             return response.choices[0].message.content
         except Exception as e:
-            print(f"❌ 大模型调用失败: {e}")
-            return "（NPC 暂时陷入了沉思...）"
+            print(f"LLM call failed: {e}")
+            return "(NPC is lost in thought...)"
+
+    async def generate_with_tools(
+        self,
+        system_prompt: str,
+        messages: list,
+        tools: list,
+    ) -> dict:
+        """
+        Tool-aware generation.
+
+        Args:
+            system_prompt: system-level instruction
+            messages: conversation history (List[dict] with role/content)
+            tools: List[dict] in OpenAI function-calling format
+
+        Returns:
+            {
+                "text": str | None,          # plain text reply (if no tool call)
+                "tool_calls": [               # tool calls the model requested
+                    {"name": str, "arguments": dict},
+                    ...
+                ],
+                "finish_reason": str,
+            }
+        """
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=full_messages,
+                temperature=0.1,
+                tools=tools,
+                tool_choice="auto",
+            )
+            choice = response.choices[0]
+            finish = choice.finish_reason
+
+            tool_calls = []
+            text = None
+
+            if finish == "tool_calls" and choice.message.tool_calls:
+                for tc in choice.message.tool_calls:
+                    import json
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                    tool_calls.append({
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": args,
+                    })
+
+            if choice.message.content:
+                text = choice.message.content
+
+            return {
+                "text": text,
+                "tool_calls": tool_calls,
+                "finish_reason": finish,
+            }
+
+        except Exception as e:
+            print(f"LLM tool call failed: {e}")
+            return {
+                "text": "(Agent is thinking...)",
+                "tool_calls": [],
+                "finish_reason": "error",
+            }

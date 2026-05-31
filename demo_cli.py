@@ -19,26 +19,17 @@ from pathlib import Path
 # 确保项目根目录在 sys.path 中
 sys.path.insert(0, str(Path(__file__).parent))
 
-from Memory.schema.memory_item import MemoryRole
 from Memory.schema.routing import BackendTarget
 from Memory.schema.retrieval import RetrievalRequest, RetrievedMemory, RetrievalResponse
 
-from Memory.storage.working_cache import WorkingMemoryCache
 from Memory.storage.sqlite_log import SQLiteLogStorage
 from Memory.storage.vector_store import VectorStore
 
-from Memory.processor.router import WriteRouter
-from Memory.processor.planner import QueryPlanner
-from Memory.policies.scoring import MemoryScorer
-from Memory.policies.retrieval_policy import RetrievalPolicy
-from Memory.policies.update_policy import UpdatePolicy
 from Memory.processor.assembler import PromptAssembler
-
-from Memory.hub.async_dispatcher import AsyncDispatcher
-from Memory.hub.ingest import IngestHub
-from Memory.hub.retrieve import RetrieveHub
-
 from Memory.processor.intent_classifier import create_intent_classifier
+
+from agents.agent_factory import setup_memory, reset_memory
+from agents.memory_aware_agent import MemoryAwareAgent
 
 from LLMClient import LLMClient
 
@@ -315,59 +306,9 @@ def _print_result_table(results: list):
             print(f"")
 
 
-def reset_memory(agent_id: str, sqlite: SQLiteLogStorage, vector_store: VectorStore):
-    """清除指定 agent 的所有记忆数据"""
-    db_path = f"demo_{agent_id}.db"
-    # 清除 SQLite
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    # 清除向量库
-    try:
-        vector_store.delete_by_agent(agent_id)
-    except Exception:
-        pass  # ChromaDB 可能没有该 agent 的数据
-    print(f"[System] 已清除 {agent_id} 的全部记忆数据")
-
-
-def setup_memory(agent_id: str):
-    """组装记忆系统：SQLite + ChromaDB，不含 Neo4j"""
-    cache = WorkingMemoryCache()
-    sqlite = SQLiteLogStorage(db_path=f"demo_{agent_id}.db")
-    vector_store = VectorStore()
-
-    router = WriteRouter()
-    update_policy = UpdatePolicy()
-
-    backends = {
-        BackendTarget.SQLITE: sqlite,
-        BackendTarget.VECTOR: vector_store,
-    }
-
-    dispatcher = AsyncDispatcher(
-        backends=backends,
-        extractor=None,
-        conflict_resolver=None,
-        index_manager=None,
-        update_policy=update_policy,
-    )
-
-    ingest = IngestHub(working_cache=cache, router=router, dispatcher=dispatcher)
-
-    planner = QueryPlanner()
-    scorer = MemoryScorer()
-    retrieval_policy = RetrievalPolicy()
-
-    retrieve = RetrieveHub(
-        planner=planner,
-        cache=cache,
-        sqlite=sqlite,
-        vector_store=vector_store,
-        graph_store=None,
-        scorer=scorer,
-        policy=retrieval_policy,
-    )
-
-    return ingest, retrieve, cache, sqlite, vector_store
+def _auto_state_printer(old_state, new_state, turn_index):
+    """on_state_change 回调：打印状态变迁（debug 模式）。"""
+    print(f"  [state] turn[{turn_index}]: {old_state} → {new_state}")
 
 
 async def run_demo():
@@ -377,6 +318,15 @@ async def run_demo():
 
     do_reset = "--reset" in sys.argv
     do_debug = "--debug-retrieval" in sys.argv
+
+    # 解析 --auto N
+    do_auto = 0
+    for i, arg in enumerate(sys.argv):
+        if arg == "--auto" and i + 1 < len(sys.argv):
+            try:
+                do_auto = int(sys.argv[i + 1])
+            except ValueError:
+                pass
 
     if do_debug:
         print("[System] 调试模式已开启 — 每次查询将打印完整检索追踪日志")
@@ -411,10 +361,44 @@ async def run_demo():
         f"如果记忆中有用户之前告诉过你的信息，请自然地引用。"
     )
 
+    memory_agent = MemoryAwareAgent(
+        agent_id=agent_id,
+        agent_name=agent_name,
+        agent_role=agent_role,
+        ingest_hub=ingest,
+        retrieve_hub=retrieve,
+        intent_classifier=classifier,
+        prompt_assembler=assembler,
+        llm_client=llm,
+        base_system_prompt=base_system_prompt,
+        time_boost_fn=apply_time_boost,
+    )
+
     print(f"\n{'=' * 55}")
     print(f"  {agent_name}（{agent_role}）已上线")
-    print(f"  输入消息开始对话，/quit 退出，/reset 重置记忆")
+    print(f"  输入消息开始对话，/quit 退出，/reset 重置记忆，/auto N 自主运行")
     print(f"{'=' * 55}\n")
+
+    # ── --auto N 模式：自主运行 N 轮后退出 ──
+    if do_auto > 0:
+        print(f"[System] Agent 自主运行 {do_auto} 轮 (--auto)...\n")
+        result = await memory_agent.run(
+            turns=do_auto,
+            on_state_change=_auto_state_printer if do_debug else None,
+        )
+        for j, resp in enumerate(result.turns):
+            print(f"  ── [{j+1}/{do_auto}] intent={resp.intent_type} autonomous={resp.is_autonomous} ──")
+            if resp.error:
+                print(f"  [ERROR] {resp.error}")
+            else:
+                print(f"  {agent_name} > {resp.text[:150]}")
+                if do_debug and resp.retrieved_memories:
+                    print(f"  retrieved: {len(resp.retrieved_memories)} memories")
+            print()
+        if result.errors:
+            print(f"  [errors] {result.errors}")
+        print(f"[System] 自主运行结束 ({len(result.turns)}/{do_auto} 轮, {result.total_elapsed_ms}ms)\n")
+        return
 
     turn = 0
     while True:
@@ -432,90 +416,61 @@ async def run_demo():
         if user_input == "/reset":
             reset_memory(agent_id, sqlite, vector_store)
             ingest, retrieve, cache, sqlite, vector_store = setup_memory(agent_id)
+            memory_agent = MemoryAwareAgent(
+                agent_id=agent_id, agent_name=agent_name, agent_role=agent_role,
+                ingest_hub=ingest, retrieve_hub=retrieve, intent_classifier=classifier,
+                prompt_assembler=assembler, llm_client=llm,
+                base_system_prompt=base_system_prompt, time_boost_fn=apply_time_boost,
+            )
             print("[System] 记忆已重置，可以开始全新对话\n")
+            continue
+        if user_input.startswith("/auto"):
+            parts = user_input.split()
+            n = int(parts[1]) if len(parts) > 1 else 3
+            print(f"\n[System] Agent 自主运行 {n} 轮...\n")
+            result = await memory_agent.run(
+                turns=n,
+                on_state_change=_auto_state_printer if do_debug else None,
+            )
+            for j, resp in enumerate(result.turns):
+                print(f"  ── 自主轮 [{j+1}] intent={resp.intent_type} ──")
+                print(f"  stimulus: {resp.context_messages[1]['content'][:80] if resp.context_messages else '?'}...")
+                print(f"  {agent_name} > {resp.text[:120]}")
+                print()
+            if result.errors:
+                print(f"  [errors] {result.errors}")
+            print(f"[System] 自主运行结束 ({len(result.turns)} 轮, {result.total_elapsed_ms}ms)\n")
             continue
 
         turn += 1
         print()
 
-        # ─── 1. 意图分类 ───
-        intent = classifier.classify(user_input)
+        # ─── 调用 MemoryAwareAgent ───
+        resp = await memory_agent.respond(user_input)
+
+        # ─── 调试输出 ───
         if do_debug:
-            print(f"  ┌─ [Intent] {intent.intent_type} | {intent.reasoning}")
-            if intent.rewritten_queries:
-                print(f"  │  rewritten_queries: {intent.rewritten_queries}")
+            print(f"  ┌─ [Intent] {resp.intent_type}")
+            if resp.rewritten_queries:
+                print(f"  │  rewritten_queries: {resp.rewritten_queries}")
+            print(f"  └─")
+            print_debug_retrieval(
+                query=user_input,
+                results_pre_boost=resp.pre_boost_snapshot,
+                results_post_boost=resp.retrieved_memories,
+                assembler_context=resp.context_messages,
+            )
+        else:
+            print(f"  ┌─ [Debug] 检索到 {len(resp.retrieved_memories)} 条记忆")
+            for i, mem in enumerate(resp.retrieved_memories):
+                source = str(mem.source)
+                content_preview = mem.item.content[:60].replace("\n", " ")
+                print(f"  │  {i+1}. [{source}] score={mem.score:.4f} | {content_preview}...")
             print(f"  └─")
 
-        # ─── 2. 根据意图分流检索 ───
-        if intent.intent_type == "chitchat":
-            # 闲聊：跳过检索，仅取短期缓存
-            cache.get_recent(5)  # 保持缓存活跃
-            results = RetrievalResponse(original_query=user_input, agent_id=agent_id)
-            context_messages = assembler.assemble(user_input, results)
-            pre_boost_snapshot = []
-
-        else:
-            # 构建检索请求
-            req_kwargs = dict(query=user_input, limit=5, agent_id=agent_id)
-            if intent.intent_type == "qa_query":
-                req_kwargs["metadata_filters"] = {"is_factual_memory": True}
-                if intent.rewritten_queries:
-                    req_kwargs["rewritten_queries"] = intent.rewritten_queries
-            request = RetrievalRequest(**req_kwargs)
-            results = retrieve.retrieve(request, agent_id=agent_id)
-
-            pre_boost_snapshot = [RetrievedMemory(item=r.item, score=r.score, source=r.source)
-                                  for r in results.results]
-
-            results.results = apply_time_boost(user_input, results.results)
-
-            # 调试输出
-            if do_debug:
-                context_messages = assembler.assemble(user_input, results)
-                print_debug_retrieval(
-                    query=user_input,
-                    results_pre_boost=pre_boost_snapshot,
-                    results_post_boost=results.results,
-                    assembler_context=context_messages,
-                )
-            else:
-                print(f"  ┌─ [Debug] 检索到 {len(results.results)} 条记忆")
-                for i, mem in enumerate(results.results):
-                    source = str(mem.source)
-                    content_preview = mem.item.content[:60].replace("\n", " ")
-                    print(f"  │  {i+1}. [{source}] score={mem.score:.4f} | {content_preview}...")
-                print(f"  └─")
-
-        # ─── 3. 组装上下文 → 生成回复 ───
-        if not do_debug:
-            context_messages = assembler.assemble(user_input, results)
-
         print(f"\n{agent_name} > ", end="", flush=True)
-        try:
-            response = await llm.generate(
-                system_prompt=base_system_prompt,
-                messages=context_messages,
-            )
-        except Exception as e:
-            response = f"(LLM 调用失败: {e})"
-
-        print(response)
+        print(resp.text)
         print()
-
-        # ─── 4. 写入记忆（带意图标签）───
-        ingest.process_message(
-            content=user_input,
-            role=MemoryRole.USER,
-            agent_id=agent_id,
-            intent_type=intent.intent_type,
-        )
-        time.sleep(0.3)
-        ingest.process_message(
-            content=response,
-            role=MemoryRole.ASSISTANT,
-            agent_id=agent_id,
-        )
-        time.sleep(0.3)
 
 
 if __name__ == "__main__":

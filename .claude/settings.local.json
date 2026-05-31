@@ -16,7 +16,10 @@
       "Bash(pytest *)",
       "Bash(dir D:\\\\DTcoding\\\\Hello-Agents\\\\Town *)",
       "Bash(dir D:\\\\DTcoding\\\\Hello-Agents\\\\Town\\\\Memory *)",
-      "Bash(dir *)"
+      "Bash(dir *)",
+      "Bash(Select-Object -First 120)",
+      "PowerShell(python -m pytest Test/ -v --tb=short 2>&1 | Select-Object -First 150)",
+      "Bash(Select-Object -First 30)"
     ]
   }
 }

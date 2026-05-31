@@ -1,20 +1,33 @@
-cyber_town_project/
+Town/
 │
-├── main.py                 # 📍 整个系统的唯一入口 (存放 FastAPI 路由、启动项、后台死循环逻辑)
+├── demo_cli.py              # 主入口 — 单智能体记忆驱动对话 (python demo_cli.py)
+├── main.py                  # FastAPI 后端 (待重写，当前不可用)
+├── LLMClient.py             # LLM 客户端 — OpenAI 兼容协议对接 Ollama
+├── config.py                # Pydantic Settings 配置加载
+├── relationship.py          # 5 级好感度系统
+├── state_manager.py         # NPC 状态管理
+├── logger.py                # 对话日志
 │
-├── core/                   # 🧠 核心逻辑层
-│   ├── __init__.py
-│   ├── agent.py            # 存放 CyberAgent 类 (实体的感知与反应)
-│   ├── memory.py           # 存放 MemoryManager 类 (记忆的增删改查与加锁机制)
-│   └── simulator.py        # 🎬 存放 TownSimulator 类 (也就是你说的“批量对话生成”，上帝视角逻辑)
+├── agents/                  # 智能体
+│   └── memory_aware_agent.py  # MemoryAwareAgent — 记忆感知单智能体
 │
-├── infra/                  # ⚙️ 基础设施层 (与外部通信的组件)
-│   ├── __init__.py
-│   ├── llm_client.py       # 存放 LLMClient 类 (专职负责调用各类大模型 API)
-│   └── database.py         # (预留) 未来放连接 Qdrant/Redis 的代码
+├── Memory/                  # 记忆系统 (核心模块)
+│   ├── schema/              # Pydantic 数据契约 (6 文件)
+│   ├── storage/             # L0 缓存 + L1 SQLite + L2 ChromaDB + L3 Neo4j
+│   ├── processor/           # Router / Planner / Assembler / IntentClassifier
+│   ├── hub/                 # IngestHub / RetrieveHub / AsyncDispatcher
+│   └── policies/            # Scoring / Update / Retention / Retrieval
 │
-├── requirements.txt        # 依赖包列表
-└── .env                    # (重要) 存放你的环境变量和私密配置
+├── Test/                    # 测试 (70 passed, 1 skipped)
+│   ├── test_schema.py
+│   ├── test_storage_l1.py
+│   ├── test_memory_pipeline.py
+│   ├── test_memory_isolation.py
+│   ├── test_memory_retrieval_quality.py
+│   └── test_memory_aware_agent.py
+│
+├── MutilAgentjinxi.md       # 项目审计 + 分阶段计划
+└── requirements.txt         # 依赖列表
 
 memory.py 实现人物得记忆
 config.py 进行参数得导入从.env文件中，他的作用是在运行之前就将所有得参数检查完毕，防止在跑得过程中在报错
