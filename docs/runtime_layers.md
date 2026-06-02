@@ -114,6 +114,19 @@ Skill = 面向任务的编排单元
   └── 结果聚合
 ```
 
-- Skill 可以使用一个或多个 Tool
-- Skill 是未来建设的，当前代码中尚未实现
-- 例："查找上次对话中的关键信息" = search_own_memory (检索) → 过滤 → 排序 → 格式化
+- Skill 可以使用一个或多个 Tool，也可以直接调用 LLM、读写 Memory
+- 当前已实现：`ObservePublicEventSkill`（观察 → 写入私有记忆）、`SummarizeRecentConversationSkill`（收集事件 → LLM 摘要 → 写入长期记忆）
+- Skill 通过 `SkillRegistry.run_if_applicable(event, agent)` 程序化触发，不依赖 LLM function calling
+
+### Memory 模块
+
+| 负责 | 不负责 |
+|------|--------|
+| 4 层存储 (L0/L1/L2/L3) | 理解 EventBus |
+| 意图驱动的写入路由 | 管理 Agent 生命周期 |
+| 多维加权检索 + 去重 | 发布/订阅 |
+| XML 物理隔离 Prompt 组装 | 多 Agent 调度 |
+| 异步事件驱动写入 | 网络通信 |
+| 分级 TTL 遗忘 / LLM 压缩 | UI 渲染 |
+
+**边界**：Memory 模块是一个独立的存储引擎。它接收文本 → 分类意图 → 路由到不同存储层 → 检索时多路融合 → 组装 XML Prompt。通过 `agent_id` 实现全链路隔离。
