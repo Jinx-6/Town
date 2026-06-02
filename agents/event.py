@@ -13,6 +13,7 @@ class Event:
     topic: str
     type: str = "message"
     content: str = ""
+    target_agent_id: str = ""
     event_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = field(default_factory=dict)

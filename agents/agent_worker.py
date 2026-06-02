@@ -15,6 +15,9 @@ class AgentWorker:
         if event.source_agent_id == self.agent.agent_id:
             return None
 
+        if event.target_agent_id and event.target_agent_id != self.agent.agent_id:
+            return None
+
         self.processed_count += 1
 
         try:
