@@ -28,6 +28,7 @@ from Memory.hub.update import UpdateHub
 from Memory.policies.retention import RetentionPolicy, RetentionConfig
 from Memory.processor.summarizer.long_term import LongTermSummarizer
 from Memory.schema.events import ConsolidationTriggerEvent
+from Memory.evaluation.online_feedback import FeedbackCollector, FeedbackEvent, FeedbackType
 from agents.memory_aware_agent import MemoryAwareAgent
 from agents.agent_factory import setup_memory, create_memory_aware_agent
 
@@ -47,6 +48,7 @@ class AgentRuntimeBundle:
     index_manager: Optional[IndexManager] = None
     consolidate_hub: Optional[ConsolidateHub] = None
     update_hub: Optional[UpdateHub] = None
+    feedback_collector: Optional[FeedbackCollector] = None
 
     def consolidate_once(self) -> int:
         """Manually trigger one consolidation cycle.
@@ -85,6 +87,50 @@ class AgentRuntimeBundle:
             )
         return self.update_hub.update_metadata(memory_id, kwargs)
 
+    def record_feedback(self, feedback_event: FeedbackEvent) -> dict:
+        """Record user feedback and bridge corrections to UpdateHub.
+
+        Returns a structured result::
+
+            {
+                "recorded": True,
+                "bridged_memory_ids": [...],
+                "failed_memory_ids": [...],
+            }
+        """
+        if not self.feedback_collector:
+            raise RuntimeError(
+                "FeedbackCollector is not enabled. "
+                "Create with enable_feedback_collector=True."
+            )
+        self.feedback_collector.record_feedback(feedback_event)
+
+        bridged: list = []
+        failed: list = []
+
+        # Bridge: CORRECTION with memory targets + correction text → UpdateHub
+        if (
+            self.update_hub is not None
+            and feedback_event.feedback_type == FeedbackType.CORRECTION
+            and feedback_event.text_comment
+            and feedback_event.cited_memory_ids
+        ):
+            for mid in feedback_event.cited_memory_ids:
+                try:
+                    ok = self.update_memory(mid, feedback_event.text_comment)
+                    if ok:
+                        bridged.append(mid)
+                    else:
+                        failed.append(mid)
+                except Exception:
+                    failed.append(mid)
+
+        return {
+            "recorded": True,
+            "bridged_memory_ids": bridged,
+            "failed_memory_ids": failed,
+        }
+
 
 def create_agent_runtime(
     *,
@@ -96,8 +142,10 @@ def create_agent_runtime(
     time_boost_fn=None,
     enable_consolidation: bool = False,
     enable_update_hub: bool = False,
+    enable_feedback_collector: bool = False,
     summarizer=None,
     retention_policy=None,
+    feedback_collector=None,
 ) -> AgentRuntimeBundle:
     """Create a full agent runtime bundle.
 
@@ -122,6 +170,7 @@ def create_agent_runtime(
     index_manager: Optional[IndexManager] = None
     consolidate_hub: Optional[ConsolidateHub] = None
     update_hub: Optional[UpdateHub] = None
+    fc: Optional[FeedbackCollector] = None
 
     needs_index = enable_consolidation or enable_update_hub
     if needs_index:
@@ -167,6 +216,10 @@ def create_agent_runtime(
                 dispatcher=dispatcher,
             )
 
+    # ── Optional: FeedbackCollector (standalone) ─────────
+    if enable_feedback_collector:
+        fc = feedback_collector or FeedbackCollector()
+
     return AgentRuntimeBundle(
         agent=agent,
         cache=cache,
@@ -175,4 +228,5 @@ def create_agent_runtime(
         index_manager=index_manager,
         consolidate_hub=consolidate_hub,
         update_hub=update_hub,
+        feedback_collector=fc,
     )
