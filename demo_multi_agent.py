@@ -55,6 +55,21 @@ class MultiAgentFakeLLM:
         return {"text": "", "tool_calls": [], "finish_reason": "stop"}
 
 
+class FakeSentimentLLM:
+    """Returns a parseable sentiment score for RelationshipManager in mock/demo mode."""
+
+    def __init__(self, score: str = "2"):
+        self._score = score
+        self.call_count = 0
+
+    async def generate(self, system_prompt: str, messages: list) -> str:
+        self.call_count += 1
+        return self._score
+
+    async def generate_with_tools(self, system_prompt, messages, tools):
+        return {"text": "", "tool_calls": [], "finish_reason": "stop"}
+
+
 # ── scenario configs ────────────────────────────────────
 
 SCENARIOS = {}
@@ -257,8 +272,15 @@ async def run_demo():
         agent_objs.append(agent)
         workers.append(AgentWorker(agent))
 
-    # Build simulator
-    sim = Simulator(policy=SchedulerPolicy(max_total_events=turns))
+    # Build simulator with optional RelationshipManager
+    from relationship import RelationshipManager
+    rel_llm = FakeSentimentLLM(score="2") if do_mock else LLMClient()
+    rel_manager = RelationshipManager(llm_client=rel_llm)
+
+    sim = Simulator(
+        policy=SchedulerPolicy(max_total_events=turns),
+        relationship_manager=rel_manager,
+    )
     for w in workers:
         sim.add_agent(w, topics=[topic])
 
