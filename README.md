@@ -1,6 +1,16 @@
 # Cyber Town — 多 Agent 记忆驱动对话系统
 
-基于 Ollama 的多智能体对话系统。每个 Agent 拥有独立 4 层记忆（工作记忆→情景日志→语义向量→知识图谱），通过发布订阅 EventBus 进行对话交互，支持工具调用和技能系统。
+Cyber Town 是一个多智能体记忆驱动对话系统。每个 Agent 拥有独立的
+4 层记忆架构——从工作记忆到语义向量到知识图谱——能像人类一样选择性
+记住关键事实、遗忘琐碎闲聊。Agent 之间通过发布订阅 EventBus 自主对话，
+无需脚本编排。
+
+项目实现了完整的记忆生命周期（写入→检索→压缩→遗忘）、意图驱动的存储路由、
+多维加权检索排序、Tool Calling 工具调用、Skill 技能层。所有组件通过
+`agent_id` 实现全链路记忆隔离。115 个测试全绿。
+
+技术栈：Python / Ollama / ChromaDB + BGE-small-zh / SQLite / pytest。
+Neo4j 知识图谱层（L3）为可选扩展点，v1 默认关闭。
 
 ## 快速开始
 
@@ -171,6 +181,29 @@ python demo_cli.py --auto 3                            # temporal_memory (需 Ol
 # skill_observation 和 tool_calling 由 pytest 覆盖
 ```
 
+### Demo Transcript (pubsub scenario, --mock)
+
+```
+[System] 注入种子消息: 「大家好，今天天气真不错！」
+
+dispatch #1: event_id=abc123  source=system
+  type=system  content=大家好，今天天气真不错！...
+  → 2 个订阅者
+
+dispatch #2: event_id=def456  source=zhang_san
+  type=message  content=[张三 模拟回复 #1] 收到了「大家好，今天天气真不错！」...
+  → 2 个订阅者
+
+dispatch #3: event_id=ghi789  source=li_si
+  type=message  content=[李四 模拟回复 #1] 收到了「[张三 模拟回复 #1]...
+  → 2 个订阅者
+
+[System] 对话结束
+  张三 (zhang_san): 处理了 2 条消息
+  李四 (li_si): 处理了 2 条消息
+  总计 dispatch: 3 个事件
+```
+
 ## Tests
 
 ```bash
@@ -234,6 +267,33 @@ Town/
 ├── .env.example
 └── .gitignore
 ```
+
+## Benchmarks
+
+实测数据来自 `benchmarks/results.md`（2026-06-03, Mock LLM 50ms delay）：
+
+| 指标 | 数值 |
+|------|------|
+| Agent 响应 (chitchat) p50 | 280 ms |
+| Agent 响应 (tool call) p50 | 335 ms |
+| Pub/Sub 吞吐 (2 agents) | 1,400 evt/s |
+| Pub/Sub 吞吐 (10 agents) | 20,500 evt/s |
+
+```bash
+python benchmarks/retrieval_bench.py
+python benchmarks/latency_bench.py --runs 30
+python benchmarks/throughput_bench.py
+```
+
+## 简历可写
+
+> **赛博小镇 — 多智能体记忆驱动对话系统**
+> - 设计并实现 4 层分级记忆架构（工作记忆 / 情景日志 / 语义向量 / 知识图谱）
+> - 基于 EventBus 发布订阅实现多 Agent 自主对话，支持定向消息和 topic 隔离
+> - 实现意图驱动的写入路由（4 类意图 → 4 种差异化存储策略）
+> - 实现 XML 物理隔离 Prompt 和多维加权检索排序（语义 60% + 时间衰减 30% + 重要性 10%）
+> - 实现 Tool Calling 工具调用 + Skill 技能层
+> - 115 个测试全绿，覆盖 Schema → 存储 → 检索 → Agent → Pub/Sub → Skill 全链路
 
 ## Limitations
 

@@ -1,0 +1,33 @@
+{
+  "environment": {
+    "python": "3.9.12",
+    "os": "Windows 11",
+    "date": "2026-06-03",
+    "llm": "mocked (50ms delay)",
+    "embedding": "mocked (MockVectorStore, no embedding)"
+  },
+  "retrieval": {
+    "precision_at_3": 0.07,
+    "recall_at_3": 0.22,
+    "mrr_at_3": 0.40,
+    "temporal_precision_at_1": 0.20,
+    "avg_latency_ms": 0.7,
+    "p50_latency_ms": 0.7,
+    "p95_latency_ms": 0.8,
+    "note": "keyword-only SQLite LIKE matching, no embedding. Chinese recall limited by space-delimited tokenization."
+  },
+  "latency": {
+    "runs": 30,
+    "chitchat": {"p50_ms": 279.8, "p95_ms": 314.3, "avg_ms": 280.3},
+    "fact_recall": {"p50_ms": 281.9, "p95_ms": 295.5, "avg_ms": 278.9},
+    "qa_with_tools": {"p50_ms": 334.8, "p95_ms": 355.6, "avg_ms": 335.8},
+    "note": "50ms mock LLM delay included. ~230ms overhead from classify/retrieve/assemble/ingest pipeline."
+  },
+  "throughput": {
+    "max_events": 200,
+    "agents_2": {"bus_events_per_sec": 1406.5, "worker_events_per_sec": 1413.6, "elapsed_ms": 142.2},
+    "agents_5": {"bus_events_per_sec": 36499.0, "worker_events_per_sec": 146178.6, "elapsed_ms": 5.5},
+    "agents_10": {"bus_events_per_sec": 20534.9, "worker_events_per_sec": 184917.1, "elapsed_ms": 9.7},
+    "note": "FakeAgent (no LLM, no memory stores). Linear-ish scaling."
+  }
+}
