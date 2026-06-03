@@ -75,7 +75,8 @@ class IndexManager:
         return len(success_flags) == 4
 
     def _delete_graph_relations(self, memory_id: str):
-        """内部图谱抹除：删除由该 memory_id 产生的所有连线，并清理孤立节点"""
+        if not self.graph_store:
+            return
         query = """
         // 1. 找到所有由该记忆产生的关系并删除
         MATCH ()-[r {memory_id: $mid}]->() 
@@ -125,16 +126,20 @@ class IndexManager:
         """
         self.logger.warning("⚠️ 开始执行全局索引重建！这可能需要很长时间...")
 
-        # 清空 L2 和 L3 库 (需确保底层类支持 clear 方法)
-        # self.vector_store.clear()
-        # self.graph_store.clear()
+        # 清空 L2 和 L3 库
+        self.vector_store.clear()
+        if self.graph_store:
+            self.graph_store.clear()
 
-        all_memories = self.sqlite.get_all()  # 从黑匣子全部拿出
+        all_memories = self.sqlite.get_all()
 
-        # ⚠️ 注意：在完全体架构中，这里应该将任务分批打入刚才写的 AsyncDispatcher 中
-        # 让后台线程慢慢去跑 Embedding 和大模型图谱抽取，而不是在主线程卡死。
-        self.logger.info(f"共发现 {len(all_memories)} 条历史记录，建议发送至异步队列重塑...")
+        self.logger.info(f"共发现 {len(all_memories)} 条历史记录，开始逐条重建索引...")
 
-        # 伪代码：
-        # for mem in all_memories:
-        #     dispatcher.submit_write_job(mem, targets=[BackendTarget.VECTOR, BackendTarget.GRAPH])
+        for i, mem in enumerate(all_memories):
+            try:
+                self.vector_store.add(mem)
+                self.logger.debug(f"[{i+1}/{len(all_memories)}] 已重建向量索引: {mem.id}")
+            except Exception as e:
+                self.logger.error(f"[{i+1}/{len(all_memories)}] 向量重建失败 {mem.id}: {e}")
+
+        self.logger.info(f"✅ 索引重建完成，共处理 {len(all_memories)} 条记录。")
