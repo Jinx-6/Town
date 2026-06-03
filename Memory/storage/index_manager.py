@@ -6,11 +6,15 @@
 
 # 保证全局一致性
 import logging
-from typing import List
+from typing import List, Any
 from Memory.storage.working_cache import WorkingMemoryCache
 from Memory.storage.sqlite_log import SQLiteLogStorage
 from Memory.storage.vector_store import VectorStore
-from Memory.storage.graph_db import GraphStore
+
+try:
+    from Memory.storage.graph_db import GraphStore
+except ImportError:  # neo4j not installed
+    GraphStore = None  # type: ignore
 
 
 class IndexManager:
