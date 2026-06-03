@@ -47,6 +47,11 @@ class AsyncDispatcher:
         except queue.Full:
             print(f"⚠️ [Dispatcher] 事件总线已满，丢弃事件: {event.event_type}")
 
+    def submit_write_job(self, item: MemoryItem, targets: list):
+        """Publish a MemoryWriteEvent for async persistence (called by UpdateHub)."""
+        event = MemoryWriteEvent(item=item, targets=targets)
+        self.publish(event)
+
     def _event_loop(self):
         while True:
             try:

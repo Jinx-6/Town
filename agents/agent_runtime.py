@@ -24,6 +24,7 @@ from Memory.storage.sqlite_log import SQLiteLogStorage
 from Memory.storage.vector_store import VectorStore
 from Memory.storage.index_manager import IndexManager
 from Memory.hub.consolidate import ConsolidateHub
+from Memory.hub.update import UpdateHub
 from Memory.policies.retention import RetentionPolicy, RetentionConfig
 from Memory.processor.summarizer.long_term import LongTermSummarizer
 from Memory.schema.events import ConsolidationTriggerEvent
@@ -45,6 +46,7 @@ class AgentRuntimeBundle:
     vector_store: VectorStore
     index_manager: Optional[IndexManager] = None
     consolidate_hub: Optional[ConsolidateHub] = None
+    update_hub: Optional[UpdateHub] = None
 
     def consolidate_once(self) -> int:
         """Manually trigger one consolidation cycle.
@@ -67,6 +69,22 @@ class AgentRuntimeBundle:
         self.consolidate_hub.handle_event(event)
         return len(candidates)
 
+    def update_memory(self, memory_id: str, new_content: str) -> bool:
+        """Correct a memory's content. Wipe-and-replace across all stores."""
+        if not self.update_hub:
+            raise RuntimeError(
+                "UpdateHub is not enabled. Create with enable_update_hub=True."
+            )
+        return self.update_hub.update_content(memory_id, new_content)
+
+    def update_memory_metadata(self, memory_id: str, **kwargs) -> bool:
+        """Update metadata fields on a memory without re-indexing."""
+        if not self.update_hub:
+            raise RuntimeError(
+                "UpdateHub is not enabled. Create with enable_update_hub=True."
+            )
+        return self.update_hub.update_metadata(memory_id, kwargs)
+
 
 def create_agent_runtime(
     *,
@@ -77,6 +95,7 @@ def create_agent_runtime(
     base_system_prompt: str = "",
     time_boost_fn=None,
     enable_consolidation: bool = False,
+    enable_update_hub: bool = False,
     summarizer=None,
     retention_policy=None,
 ) -> AgentRuntimeBundle:
@@ -102,20 +121,22 @@ def create_agent_runtime(
 
     index_manager: Optional[IndexManager] = None
     consolidate_hub: Optional[ConsolidateHub] = None
+    update_hub: Optional[UpdateHub] = None
 
-    if enable_consolidation:
+    needs_index = enable_consolidation or enable_update_hub
+    if needs_index:
         # ── Guard: verify dispatch chain ─────────────────
         if not hasattr(agent, "ingest"):
             raise RuntimeError(
-                "Agent is missing 'ingest' hub — cannot wire consolidation."
+                "Agent is missing 'ingest' hub — cannot wire runtime infrastructure."
             )
         if not hasattr(agent.ingest, "dispatcher"):
             raise RuntimeError(
-                "Agent.ingest is missing 'dispatcher' — cannot wire consolidation."
+                "Agent.ingest is missing 'dispatcher' — cannot wire runtime infrastructure."
             )
         dispatcher = agent.ingest.dispatcher
 
-        # ── Build consolidation infrastructure ────────────
+        # ── Shared IndexManager ───────────────────────────
         index_manager = IndexManager(
             cache=cache,
             sqlite=sqlite,
@@ -124,18 +145,27 @@ def create_agent_runtime(
         )
         dispatcher.index_manager = index_manager
 
-        rp = retention_policy or RetentionPolicy()
-        sm = summarizer or LongTermSummarizer()
-        consolidate_hub = ConsolidateHub(
-            sqlite=sqlite,
-            index_manager=index_manager,
-            dispatcher=dispatcher,
-            summarizer=sm,
-            retention_policy=rp,
-        )
-        dispatcher.register_consolidate_hub(consolidate_hub)
-        # NOTE: start_auto_compress_cron() is deliberately NOT called.
-        # Consolidation is manual-only via bundle.consolidate_once().
+        # ── Optional: ConsolidateHub ──────────────────────
+        if enable_consolidation:
+            rp = retention_policy or RetentionPolicy()
+            sm = summarizer or LongTermSummarizer()
+            consolidate_hub = ConsolidateHub(
+                sqlite=sqlite,
+                index_manager=index_manager,
+                dispatcher=dispatcher,
+                summarizer=sm,
+                retention_policy=rp,
+            )
+            dispatcher.register_consolidate_hub(consolidate_hub)
+            # NOTE: start_auto_compress_cron() is NOT called.
+
+        # ── Optional: UpdateHub ───────────────────────────
+        if enable_update_hub:
+            update_hub = UpdateHub(
+                sqlite=sqlite,
+                index_manager=index_manager,
+                dispatcher=dispatcher,
+            )
 
     return AgentRuntimeBundle(
         agent=agent,
@@ -144,4 +174,5 @@ def create_agent_runtime(
         vector_store=vector_store,
         index_manager=index_manager,
         consolidate_hub=consolidate_hub,
+        update_hub=update_hub,
     )

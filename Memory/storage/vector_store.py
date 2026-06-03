@@ -122,6 +122,14 @@ class VectorStore:
 
         return retrieval_results
 
+    def delete(self, memory_id: str):
+        """Delete a single memory by its id from the vector store."""
+        self.collection.delete(ids=[memory_id])
+
     def delete_by_agent(self, agent_id: str):
         """物理删除某个 Agent 的所有记忆（如：NPC 重置）"""
         self.collection.delete(where={"agent_id": agent_id})
+
+    def clear(self):
+        """清空向量库全部数据（用于索引重建）"""
+        self.collection.delete(where={})

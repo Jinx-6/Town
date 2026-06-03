@@ -83,10 +83,14 @@ class UpdateHub:
             return False
 
         # 合并现有的 metadata 和新传入的键值对
-        current_metadata = original_item.metadata or {}
-        current_metadata.update(new_metadata_kvs)
+        from ..schema.memory_item import MemoryMetadata
+        current_metadata = original_item.metadata.model_dump() if original_item.metadata else {}
+        for k, v in new_metadata_kvs.items():
+            current_metadata[k] = v
 
-        updated_item = original_item.model_copy(update={"metadata": current_metadata})
+        updated_item = original_item.model_copy(
+            update={"metadata": MemoryMetadata(**current_metadata)}
+        )
 
         # 由于仅仅是 metadata 变动，我们不需要全域 Wipe。
         # 1. 覆盖写入 SQLite (假设 sqlite 内部 add 支持基于 ID 的 UPSERT / 覆盖)
