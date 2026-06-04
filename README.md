@@ -328,4 +328,3 @@ python benchmarks/throughput_bench.py
 - [ ] Agent 间关系建模（好感度 + 信任度）
 - [ ] 持久事件日志（EventStore）
 - [ ] Web UI 或 Godot 前端接入
-- [ ] 隐私合规模块（`Memory/privacy/`）

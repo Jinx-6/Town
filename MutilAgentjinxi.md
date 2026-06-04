@@ -55,7 +55,6 @@
 | **技能系统** | 不存在 | 无任何技能/工具调用框架 |
 | **函数调用 / Tool Use** | 不存在 | Agent 无调用外部函数的能力；`LLMClient.generate()` 不支持 OpenAI function calling |
 | **可视化** | 不存在 | 无前端、无 Godot 客户端接入 |
-| **隐私合规模块** | 不存在 | `Memory/privacy/` 目录在 README 中列出但未创建对应文件 |
 | **队列限流策略** | 不存在 | `Memory/hub/queue_policy.py` 未创建 |
 | **Agent 单元测试** | 不存在 | `CyberAgent`、`LLMClient`、`relationship.py`、`state_manager.py` 全无测试覆盖 |
 
