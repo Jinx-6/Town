@@ -11,6 +11,7 @@ Usage:
 import sys
 import os
 import time
+import argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -108,12 +109,16 @@ QUERIES = [
 ]
 
 
-def setup_pipeline():
+def setup_pipeline(use_real: bool = False):
     if os.path.exists(_DB_PATH):
         os.remove(_DB_PATH)
     cache = WorkingMemoryCache()
     sqlite = SQLiteLogStorage(db_path=_DB_PATH)
-    vector_store = MockVectorStore()
+    if use_real:
+        from Memory.storage.vector_store import VectorStore
+        vector_store = VectorStore()
+    else:
+        vector_store = MockVectorStore()
     planner = MagicMock()
     def _mock_plan(query):
         return RetrievalPlan(original_query=query, instructions=[
@@ -172,10 +177,17 @@ def mrr(retrieved, relevant):
 
 
 def run():
-    print("=== retrieval_bench ===")
-    print(f"  agent_id={AGENT_ID}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--real", action="store_true",
+                        help="Use real ChromaDB + BGE-small-zh (requires sentence-transformers)")
+    args = parser.parse_args()
 
-    sqlite, vector_store, retrieve = setup_pipeline()
+    mode = "ChromaDB + BGE-small-zh (real embedding)" if args.real else "MockVectorStore (keyword-only, no embedding)"
+    print(f"=== retrieval_bench ===")
+    print(f"  agent_id={AGENT_ID}")
+    print(f"  mode: {mode}")
+
+    sqlite, vector_store, retrieve = setup_pipeline(use_real=args.real)
     inject_seeds(sqlite, vector_store)
 
     p_at_3 = []
@@ -224,10 +236,18 @@ def run():
     print(f"  avg latency       = {sum(latencies)/len(latencies):.1f} ms")
     print(f"  p50 latency       = {p50:.1f} ms")
     print(f"  p95 latency       = {p95:.1f} ms")
-    print(f"  note: latency excludes embedding (MockVectorStore)")
+
+    if args.real:
+        print(f"  note: latency includes BGE-small-zh embedding computation")
+        print(f"  mock reference: P@3=0.07  R@3=0.22  MRR@3=0.40  (keyword-only SQLite LIKE)")
+    else:
+        print(f"  note: latency excludes embedding (MockVectorStore)")
+        print(f"  tip: run with --real for ChromaDB + BGE-small-zh semantic retrieval numbers")
 
     # cleanup
     os.remove(_DB_PATH) if os.path.exists(_DB_PATH) else None
+    if args.real:
+        vector_store.delete_by_agent(AGENT_ID)
 
 
 if __name__ == "__main__":

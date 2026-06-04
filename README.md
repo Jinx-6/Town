@@ -304,14 +304,16 @@ Town/
 
 ## Benchmarks
 
-实测数据来自 `benchmarks/results.md`（2026-06-03, Mock LLM 50ms delay）：
+实测数据来自 `benchmarks/results.md`（2026-06-04, Mock LLM 50ms delay）：
 
-| 指标 | 数值 |
-|------|------|
-| Agent 响应 (chitchat) p50 | 280 ms |
-| Agent 响应 (tool call) p50 | 335 ms |
-| Pub/Sub 吞吐 (2 agents) | 1,400 evt/s |
-| Pub/Sub 吞吐 (10 agents) | 20,500 evt/s |
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| Retrieval Recall@3 | **0.61** | ChromaDB + BGE-small-zh（keyword-only: 0.30） |
+| Retrieval MRR@3 | **0.87** | ChromaDB + BGE-small-zh（keyword-only: 0.60） |
+| Agent 响应 (chitchat) p50 | 280 ms | classify → retrieve → assemble → generate → ingest |
+| Agent 响应 (tool call) p50 | 335 ms | 同上 + tool dispatch + 第二次 LLM |
+| Pub/Sub 吞吐 (2 agents) | 1,400 evt/s | FakeAgent, 无 LLM 无存储 |
+| Pub/Sub 吞吐 (10 agents) | 20,500 evt/s | FakeAgent, 无 LLM 无存储 |
 
 ```bash
 python benchmarks/retrieval_bench.py

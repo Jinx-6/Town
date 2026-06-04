@@ -2,19 +2,31 @@
   "environment": {
     "python": "3.9.12",
     "os": "Windows 11",
-    "date": "2026-06-03",
+    "date": "2026-06-04",
     "llm": "mocked (50ms delay)",
-    "embedding": "mocked (MockVectorStore, no embedding)"
+    "embedding": "ChromaDB + BGE-small-zh (384d)"
   },
   "retrieval": {
-    "precision_at_3": 0.07,
-    "recall_at_3": 0.22,
-    "mrr_at_3": 0.40,
-    "temporal_precision_at_1": 0.20,
-    "avg_latency_ms": 0.7,
-    "p50_latency_ms": 0.7,
-    "p95_latency_ms": 0.8,
-    "note": "keyword-only SQLite LIKE matching, no embedding. Chinese recall limited by space-delimited tokenization."
+    "mock": {
+      "precision_at_3": 0.07,
+      "recall_at_3": 0.30,
+      "mrr_at_3": 0.60,
+      "temporal_precision_at_1": 0.60,
+      "avg_latency_ms": 0.6,
+      "p50_latency_ms": 0.6,
+      "p95_latency_ms": 0.8,
+      "note": "keyword-only SQLite LIKE matching, no embedding. CI-compatible."
+    },
+    "real": {
+      "precision_at_3": 0.12,
+      "recall_at_3": 0.61,
+      "mrr_at_3": 0.87,
+      "temporal_precision_at_1": 0.60,
+      "avg_latency_ms": 15.0,
+      "p50_latency_ms": 12.8,
+      "p95_latency_ms": 38.0,
+      "note": "ChromaDB + BGE-small-zh real embedding. Recall 2x, MRR 1.5x vs keyword. Precision limited by benchmark expected-set design."
+    }
   },
   "latency": {
     "runs": 30,

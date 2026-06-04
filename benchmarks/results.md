@@ -4,22 +4,24 @@
 
 ## Retrieval Quality
 
-| Metric | Value |
-|--------|-------|
-| Precision@3 | 0.07 |
-| Recall@3 | 0.22 |
-| MRR@3 | 0.40 |
-| Temporal Precision@1 | 0.20 |
-| avg latency | 0.7 ms |
-| p50 latency | 0.7 ms |
-| p95 latency | 0.8 ms |
+| Metric | Mock (keyword) | Real (ChromaDB) |
+|--------|----------------|-----------------|
+| Precision@3 | 0.07 | 0.12 |
+| Recall@3 | 0.30 | 0.61 |
+| MRR@3 | 0.60 | 0.87 |
+| Temporal Precision@1 | 0.60 | 0.60 |
+| avg latency | 0.6 ms | 15.0 ms |
+| p50 latency | 0.6 ms | 12.8 ms |
+| p95 latency | 0.8 ms | 38.0 ms |
 
-**Note**: These numbers reflect keyword-only retrieval via SQLite `LIKE` matching
-with `MockVectorStore` (no embedding). The current `search_with_metadata`
-implementation uses space-delimited keyword splitting, which has poor recall on
-Chinese text without explicit whitespace. In production with ChromaDB +
-BGE-small-zh embeddings, semantic recall is expected to be significantly higher.
-Latency includes SQLite + in-memory vector lookup only (no embedding computation).
+**Mock** (default): keyword-only SQLite `LIKE` matching, `MockVectorStore` (no
+embedding). Latency excludes embedding. CI-compatible.
+
+**Real**: ChromaDB + BGE-small-zh (384d). Latency includes on-the-fly embedding
+computation per query + ChromaDB ANN search. Recall@3 improves ~2x, MRR@3
+improves ~1.5x over keyword-only. Precision@3 is limited by benchmark design
+(expected set vs semantically-relevant-but-not-expected items). Run via
+`python benchmarks/retrieval_bench.py --real`.
 
 ## Agent Respond Latency
 
