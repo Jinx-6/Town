@@ -7,7 +7,7 @@ Cyber Town 是一个多智能体记忆驱动对话系统。每个 Agent 拥有�
 
 项目实现了完整的记忆生命周期（写入→检索→压缩→遗忘）、意图驱动的存储路由、
 多维加权检索排序、Tool Calling 工具调用、Skill 技能层。所有组件通过
-`agent_id` 实现全链路记忆隔离。115 个测试全绿。
+`agent_id` 实现全链路记忆隔离。151 个测试全绿。
 
 技术栈：Python / Ollama / ChromaDB + BGE-small-zh / SQLite / pytest。
 Neo4j 知识图谱层（L3）为可选扩展点，v1 默认关闭。
@@ -125,7 +125,8 @@ ConsolidateHub (定时 12h)
 | Event | `agents/event.py` | 事件数据结构：source/target/topic/type/content |
 | EventBus | `agents/event_bus.py` | 订阅/发布/调度/去重/配额 |
 | SchedulerPolicy | `agents/event_bus.py` | max_total_events + per_agent_max + 去重 |
-| AgentWorker | `agents/agent_worker.py` | Event↔Agent 协议转换，自事件/target 过滤 |
+| AgentWorker | `agents/agent_worker.py` | Event↔Agent 协议转换，自事件/target 过滤，关系更新 |
+| RelationshipManager | `relationship.py` | 5 级好感度系统，LLM 情感分析，Agent 间实时关系演化 |
 | Simulator | `simulator.py` | 编排：创建 Bus + Workers，注入话题，运行 |
 
 ### 事件流
@@ -142,6 +143,30 @@ System inject → town.public → EventBus.publish()
 - `max_total_events`：硬截断，防止无限对话循环
 - `per_agent_max`：限制单个 Agent 产出 Event 数量，防止刷屏
 - `_dispatched_ids`：event_id 去重，防止同一事件被重复分发
+
+## AgentRuntimeBundle
+
+`create_agent_runtime()` 是 v1.1 的统一装配入口，在 `create_memory_aware_agent()` 基础上扩展可选模块：
+
+```python
+bundle = create_agent_runtime(
+    agent_id="zhang_san", agent_name="张三", agent_role="工程师",
+    llm_client=llm,
+    enable_consolidation=True,        # ConsolidateHub：手动触发记忆压缩/GC
+    enable_update_hub=True,           # UpdateHub：记忆内容纠偏
+    enable_feedback_collector=True,   # FeedbackCollector：反馈收集 + CORRECTION 桥接
+)
+
+bundle.consolidate_once()            # 手动触发一轮新陈代谢（不启动 cron）
+bundle.update_memory(mid, new_text)  # 纠正一条记忆
+bundle.record_feedback(event)        # 记录反馈，CORRECTION 自动桥接 UpdateHub
+```
+
+| 模块 | 触发方式 | 职责 |
+|------|----------|------|
+| ConsolidateHub | `bundle.consolidate_once()` | RetentionPolicy 分级遗忘 (GC + 压缩) |
+| UpdateHub | `bundle.update_memory()` | Wipe-and-replace 记忆纠偏 |
+| FeedbackCollector | `bundle.record_feedback()` | JSONL 反馈日志 + CORRECTION → UpdateHub |
 
 ## Tool vs Skill
 
@@ -207,13 +232,17 @@ dispatch #3: event_id=ghi789  source=li_si
 ## Tests
 
 ```bash
-pytest -q                                          # 115 tests, ~4 min
+pytest -q                                          # 151 tests
 pytest Test/test_multi_agent_pubsub.py -q           # 21 tests, pub/sub
 pytest Test/test_skills.py -q                       # 12 tests, skill layer
 pytest Test/test_agent_tools.py -q                  # 24 tests, tools
 pytest Test/test_memory_pipeline.py -q              # ~20 tests, memory pipeline
 pytest Test/test_memory_isolation.py -q             # 8 tests, isolation
 pytest Test/test_memory_retrieval_quality.py -q     # ~15 tests, retrieval
+pytest Test/test_relationship_integration.py -q     # 4 tests, relationship
+pytest Test/test_consolidate_integration.py -q      # 5 tests, consolidation
+pytest Test/test_update_integration.py -q           # 4 tests, update hub
+pytest Test/test_feedback_integration.py -q         # 5 tests, feedback
 ```
 
 | 测试文件 | 覆盖 |
@@ -227,6 +256,10 @@ pytest Test/test_memory_retrieval_quality.py -q     # ~15 tests, retrieval
 | `test_memory_aware_agent.py` | Agent 集成（需 Ollama，默认跳过） |
 | `test_multi_agent_pubsub.py` | EventBus / AgentWorker / Simulator / memory isolation |
 | `test_skills.py` | SkillRegistry / ObservePublicEvent / Summarize / 隔离 |
+| `test_relationship_integration.py` | RelationshipManager 注入 / agent direct message / system & user 排除 |
+| `test_consolidate_integration.py` | AgentRuntimeBundle / ConsolidateHub 手动触发 / 不启动 cron |
+| `test_update_integration.py` | UpdateHub 记忆更正 / 元数据更新 / 级联擦写 |
+| `test_feedback_integration.py` | FeedbackCollector 日志 / CORRECTION 桥接 UpdateHub / 非更正排除 |
 
 ## 目录结构
 
@@ -245,7 +278,8 @@ Town/
 │   ├── event_bus.py         #   EventBus + SchedulerPolicy
 │   ├── agent_worker.py      #   AgentWorker 协议适配
 │   ├── memory_aware_agent.py#   MemoryAwareAgent
-│   ├── agent_factory.py     #   Agent 工厂
+│   ├── agent_factory.py     #   Agent 工厂 (create_memory_aware_agent)
+│   ├── agent_runtime.py     #   AgentRuntimeBundle (create_agent_runtime)
 │   ├── tool.py              #   Tool 协议 + 3 个内置工具
 │   ├── tool_registry.py     #   ToolRegistry
 │   └── tool_loop.py         #   ToolLoop
@@ -260,7 +294,7 @@ Town/
 │   ├── hub/                 #   IngestHub / RetrieveHub / AsyncDispatcher
 │   ├── policies/            #   Scoring / Update / Retention / Retrieval
 │   └── evaluation/          #   Metrics / Regression / OnlineFeedback
-├── Test/                    # 115 tests
+├── Test/                    # 151 tests (13 files)
 ├── docs/
 │   └── runtime_layers.md    # 能力边界定义
 ├── requirements.txt
@@ -291,14 +325,16 @@ python benchmarks/throughput_bench.py
 > - 设计并实现 4 层分级记忆架构（工作记忆 / 情景日志 / 语义向量 / 知识图谱）
 > - 基于 EventBus 发布订阅实现多 Agent 自主对话，支持定向消息和 topic 隔离
 > - 实现意图驱动的写入路由（4 类意图 → 4 种差异化存储策略）
+> - 实现完整的记忆生命周期：写入 → 检索 → 压缩(ConsolidateHub) → 纠偏(UpdateHub)
 > - 实现 XML 物理隔离 Prompt 和多维加权检索排序（语义 60% + 时间衰减 30% + 重要性 10%）
 > - 实现 Tool Calling 工具调用 + Skill 技能层
-> - 115 个测试全绿，覆盖 Schema → 存储 → 检索 → Agent → Pub/Sub → Skill 全链路
+> - 实现 Agent 间关系建模（好感度 5 级 + LLM 情感分析 + 实时更新）
+> - 151 个测试全绿，覆盖 Schema → 存储 → 检索 → Agent → Pub/Sub → Hubs 全链路
 
 ## Limitations
 
 - **LLM 依赖**：Agent 集成测试和真实 demo 需要 Ollama 本地运行；纯逻辑测试使用 Mock 无需 LLM
-- **L3 Neo4j**：代码完整但默认关闭（`graph_store=None`），检索代码被注释
+- **L3 Neo4j**：代码完整但默认关闭（`graph_store=None`），需手动安装并启动 Neo4j
 - **Tool Calling**：需要 Ollama 模型支持 OpenAI function calling
 - **单进程**：EventBus 是内存实现，不支持跨进程或多机通信
 - **无前端**：仅命令行交互，无 Web UI / Godot 客户端
@@ -306,25 +342,28 @@ python benchmarks/throughput_bench.py
 
 ## Roadmap
 
-### v1.0 ✅ (当前)
+### v1.0 ✅ (已发布)
 
 - [x] 4 层 Memory 系统（L0 Cache / L1 SQLite / L2 ChromaDB / L3 Neo4j）
 - [x] MemoryAwareAgent（classify → retrieve → assemble → generate → ingest）
 - [x] Pub/Sub Multi-Agent Runtime（EventBus + AgentWorker + Simulator）
 - [x] Tool System（3 个内置工具 + ToolRegistry + ToolLoop）
 - [x] Skill Layer（ObservePublicEvent + SummarizeRecentConversation）
-- [x] 115 tests，全绿
 
-### v1.1 (计划)
+### v1.1 ✅ (当前 — mvp-agent-demo 分支)
 
-- [ ] `_apply_time_filter` 时间过滤实现
-- [ ] ConsolidateHub / UpdateHub 接入 Agent 循环
+- [x] `_apply_time_filter` 时间过滤 (today / yesterday)
+- [x] ConsolidateHub 接入（AgentRuntimeBundle，手动触发，不启动 cron）
+- [x] UpdateHub 接入（记忆纠偏，wipe-and-replace）
+- [x] RelationshipManager 接入（Simulator + AgentWorker 自动注入）
+- [x] FeedbackCollector 接入（JSONL 日志 + CORRECTION → UpdateHub 桥接）
+- [x] AgentRuntimeBundle（create_agent_runtime，统一装配入口）
+- [x] 151 tests，全绿
 - [ ] MockLLMClient 提取为共享测试模块
 - [ ] `state_manager.py` / `relationship.py` 单元测试
 
 ### v2.0 (远期)
 
 - [ ] 跨 Agent 协作任务（任务分解 / 子任务分配）
-- [ ] Agent 间关系建模（好感度 + 信任度）
 - [ ] 持久事件日志（EventStore）
 - [ ] Web UI 或 Godot 前端接入
