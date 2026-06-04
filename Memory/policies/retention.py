@@ -48,7 +48,7 @@ class RetentionPolicy:
             return False
 
         now = now or datetime.now(timezone.utc)
-        item_time = item.created_at if item.created_at.tzinfo else item.created_at.replace(tzinfo=timezone.utc)
+        item_time = item.timestamp if item.timestamp.tzinfo else item.timestamp.replace(tzinfo=timezone.utc)
 
         delta_days = (now - item_time).total_seconds() / (24 * 3600)
 
@@ -64,7 +64,7 @@ class RetentionPolicy:
             return False
 
         now = now or datetime.now(timezone.utc)
-        item_time = item.created_at if item.created_at.tzinfo else item.created_at.replace(tzinfo=timezone.utc)
+        item_time = item.timestamp if item.timestamp.tzinfo else item.timestamp.replace(tzinfo=timezone.utc)
 
         delta_days = (now - item_time).total_seconds() / (24 * 3600)
 

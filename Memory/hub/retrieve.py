@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from ..schema.memory_item import MemoryItem, MemoryRole, MemoryStage
 from ..schema.routing import BackendTarget
@@ -102,11 +102,21 @@ class RetrieveHub:
         allowed_targets = request.targets
 
         # --- A. 检索 L3 知识图谱 ---
-        if BackendTarget.GRAPH in allowed_targets:
+        if BackendTarget.GRAPH in allowed_targets and self.graph_store:
             graph_limit = quotas.get(BackendTarget.GRAPH, 5)
-            # ✨ 修改点 4：图谱查询必须传入 agent_id
-            # graph_hits = self.graph_store.search(ins.search_query, limit=graph_limit, agent_id=agent_id)
-            # ... 转换 graph_hits 并 upsert ...
+            graph_hits = self.graph_store.search_subgraph(
+                ins.search_query, agent_id=agent_id, depth=2
+            )
+            for g_hit in graph_hits[:graph_limit]:
+                content = f"{g_hit.get('subject','')} {g_hit.get('predicate','')} {g_hit.get('object','')}"
+                fake_item = MemoryItem(
+                    id=f"graph_{uuid.uuid4().hex[:8]}",
+                    content=f"[知识图谱] {content}",
+                    role=MemoryRole.SYSTEM,
+                    agent_id=agent_id,
+                    stage=MemoryStage.SEMANTIC,
+                )
+                self._upsert_sub_result(local_results, fake_item, 0.8, BackendTarget.GRAPH)
 
         # --- B. 检索 L1 SQLite 情景记忆 ---
         if self.sqlite and BackendTarget.SQLITE in allowed_targets:
@@ -157,8 +167,21 @@ class RetrieveHub:
             collection[item.id].score = max(collection[item.id].score, score) + 0.1
 
     def _apply_time_filter(self, results: List[RetrievedMemory], time_filter: str) -> List[RetrievedMemory]:
-        # 时间过滤逻辑保持不变...
         if not time_filter or time_filter == "all":
             return results
-        # ... (中间过滤代码略)
+
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if time_filter == "today":
+            return [r for r in results if r.item.timestamp >= today_start]
+
+        if time_filter == "yesterday":
+            yesterday_start = today_start - timedelta(days=1)
+            yesterday_end = today_start
+            return [
+                r for r in results
+                if yesterday_start <= r.item.timestamp < yesterday_end
+            ]
+
         return results

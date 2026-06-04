@@ -37,6 +37,11 @@ class GraphStore:
         with self.driver.session() as session:
             session.execute_write(self._delete_relation_tx, sub, pred, obj, agent_id)
 
+    def clear(self):
+        """清空图谱全部数据（用于索引重建）"""
+        with self.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+
     def get_objects_for_predicate(self, sub: str, pred: str, agent_id: str) -> List[str]:
         """
         ✨ 改造：查询特定 Agent 认知下的事实

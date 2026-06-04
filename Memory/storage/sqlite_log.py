@@ -100,6 +100,13 @@ class SQLiteLogStorage:
             cursor = conn.execute(query, tuple(params))
             return [self._row_to_item(row) for row in cursor.fetchall()]
 
+    def get_all(self) -> List[MemoryItem]:
+        """获取表中全部记忆记录"""
+        query = "SELECT * FROM episodic_memory ORDER BY timestamp DESC"
+        with self._get_connection() as conn:
+            cursor = conn.execute(query)
+            return [self._row_to_item(row) for row in cursor.fetchall()]
+
     def update(self, item: MemoryItem):
         """更新已有记忆（用于反思、重要度重排等场景）"""
         # ✨ 加固：安全获取 stage 的值

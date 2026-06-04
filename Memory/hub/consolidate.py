@@ -78,7 +78,7 @@ class ConsolidateHub:
 
         # 为了不阻塞主线程或数据库，我们可以先拉取一批候选数据
         # 假设 sqlite 有一个方法可以拉取按照时间倒序的 N 条数据
-        candidates = self.sqlite.get_recent_memories(limit=event.batch_size * 2)
+        candidates = self.sqlite.list_recent(limit=event.batch_size * 2)
 
         if not candidates:
             return
