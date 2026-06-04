@@ -223,3 +223,225 @@ def test_task_done_does_not_create_event_loop():
 
     assert result is None, "task_done must not produce any reply"
     assert fake_llm.call_count == 0, "LLM should not be called for task_done"
+
+
+# ── M2-b helpers ─────────────────────────────────────────
+
+_THREE_SUBTASK_JSON = """{
+  "subtasks": [
+    {"title": "t1", "description": "write PRD", "required_role": "产品经理"},
+    {"title": "t2", "description": "estimate effort", "required_role": "Python工程师"},
+    {"title": "t3", "description": "design UI", "required_role": "UI设计师"}
+  ]
+}"""
+
+_TWO_SUBTASK_JSON = """{
+  "subtasks": [
+    {"title": "spec", "description": "write spec", "required_role": "产品经理"},
+    {"title": "impl", "description": "implement feature", "required_role": "Python工程师"}
+  ]
+}"""
+
+_BAD_ROLE_JSON = """{
+  "subtasks": [
+    {"title": "t1", "description": "desc", "required_role": "产品经理"},
+    {"title": "t2", "description": "desc", "required_role": "清洁工"}
+  ]
+}"""
+
+
+class FakeDecomposeLLM:
+    """Returns canned JSON for decomposition."""
+
+    def __init__(self, json_str: str):
+        self._json = json_str
+        self.call_count = 0
+
+    async def generate(self, system_prompt: str, messages: list) -> str:
+        self.call_count += 1
+        return self._json
+
+    async def generate_with_tools(self, system_prompt, messages, tools):
+        return {"text": "", "tool_calls": [], "finish_reason": "stop"}
+
+
+class FakeCollabLLM:
+    """Returns JSON for decompose and text for synthesize based on prompt."""
+
+    def __init__(self, decompose_json: str, synthesize_text: str):
+        self._decompose_json = decompose_json
+        self._synthesize_text = synthesize_text
+        self.decompose_count = 0
+        self.synthesize_count = 0
+
+    async def generate(self, system_prompt: str, messages: list) -> str:
+        if "任务分解" in system_prompt:
+            self.decompose_count += 1
+            return self._decompose_json
+        self.synthesize_count += 1
+        return self._synthesize_text
+
+    async def generate_with_tools(self, system_prompt, messages, tools):
+        return {"text": "", "tool_calls": [], "finish_reason": "stop"}
+
+
+def _make_coordinator(bus, llm_client=None, **kwargs):
+    """Create a TaskCoordinator, optionally with an LLM."""
+    return TaskCoordinator(bus, llm_client=llm_client, **kwargs)
+
+
+# ── Test 8 ───────────────────────────────────────────────
+
+def test_decompose_with_llm_returns_subtasks():
+    """LLM decomposition returns correctly structured CollaborationTask objects."""
+    bus = EventBus()
+    fake_llm = FakeDecomposeLLM(_THREE_SUBTASK_JSON)
+    coordinator = _make_coordinator(bus, llm_client=fake_llm)
+
+    roles = ["产品经理", "Python工程师", "UI设计师"]
+    tasks = asyncio.run(coordinator.decompose_with_llm(
+        "设计用户登录页面", roles, parent_task_id="p1",
+    ))
+
+    assert len(tasks) == 3, f"Expected 3 tasks, got {len(tasks)}"
+    assert tasks[0].required_role == "产品经理"
+    assert tasks[1].required_role == "Python工程师"
+    assert tasks[2].required_role == "UI设计师"
+    for t in tasks:
+        assert t.parent_task_id == "p1"
+        assert t.status == TaskStatus.CREATED
+    assert fake_llm.call_count == 1
+
+
+# ── Test 9 ───────────────────────────────────────────────
+
+def test_decompose_with_llm_bad_json_returns_empty():
+    """Malformed LLM output → empty list, no exception."""
+    bus = EventBus()
+    coordinator = _make_coordinator(bus, llm_client=FakeDecomposeLLM("not valid!!"))
+
+    tasks = asyncio.run(coordinator.decompose_with_llm(
+        "request", ["engineer"],
+    ))
+    assert tasks == []
+
+
+def test_decompose_with_llm_unknown_role_skipped():
+    """Subtask with required_role not in available_roles is excluded."""
+    bus = EventBus()
+    coordinator = _make_coordinator(bus, llm_client=FakeDecomposeLLM(_BAD_ROLE_JSON))
+
+    roles = ["产品经理", "Python工程师"]
+    tasks = asyncio.run(coordinator.decompose_with_llm(
+        "request", roles,
+    ))
+
+    assert len(tasks) == 1
+    assert tasks[0].required_role == "产品经理"
+
+
+def test_decompose_without_llm_raises():
+    """decompose_with_llm without llm_client raises RuntimeError."""
+    bus = EventBus()
+    coordinator = _make_coordinator(bus, llm_client=None)
+
+    try:
+        asyncio.run(coordinator.decompose_with_llm("req", ["role"]))
+        assert False, "Should have raised RuntimeError"
+    except RuntimeError as e:
+        assert "not configured" in str(e)
+
+
+# ── Test 10 ──────────────────────────────────────────────
+
+def test_synthesize_results_returns_summary():
+    """synthesize_results calls LLM and returns summary text."""
+    bus = EventBus()
+    fake_llm = FakeDecomposeLLM("integrated final plan")
+    coordinator = _make_coordinator(bus, llm_client=fake_llm)
+
+    # Pre-populate results and tasks
+    coordinator._results["p1"] = [
+        {"task_id": "t1", "agent_id": "agent_a", "agent_name": "A", "result": "PRD done"},
+        {"task_id": "t2", "agent_id": "agent_b", "agent_name": "B", "result": "code done"},
+    ]
+    coordinator._tasks["t1"] = CollaborationTask(
+        task_id="t1", title="spec", description="d", required_role="产品经理",
+    )
+    coordinator._tasks["t2"] = CollaborationTask(
+        task_id="t2", title="impl", description="d", required_role="Python工程师",
+    )
+
+    summary = asyncio.run(coordinator.synthesize_results("p1", "original request"))
+    assert summary == "integrated final plan"
+    assert fake_llm.call_count == 1
+
+
+def test_synthesize_without_llm_raises():
+    """synthesize_results without llm_client raises RuntimeError."""
+    bus = EventBus()
+    coordinator = _make_coordinator(bus, llm_client=None)
+
+    try:
+        asyncio.run(coordinator.synthesize_results("p1"))
+        assert False, "Should have raised RuntimeError"
+    except RuntimeError as e:
+        assert "not configured" in str(e)
+
+
+# ── Test 11 ──────────────────────────────────────────────
+
+def test_e2e_collaboration_with_llm_orchestration():
+    """Full pipeline: decompose → assign → execute → collect → synthesize."""
+    bus = EventBus(policy=SchedulerPolicy(max_total_events=50))
+    collab_llm = FakeCollabLLM(
+        decompose_json=_TWO_SUBTASK_JSON,
+        synthesize_text="final integrated plan",
+    )
+    coordinator = _make_coordinator(bus, llm_client=collab_llm)
+
+    roles = ["产品经理", "Python工程师"]
+
+    # Step 1: decompose
+    tasks = asyncio.run(coordinator.decompose_with_llm(
+        "plan a feature release", roles, parent_task_id="parent_e2e",
+    ))
+    assert len(tasks) == 2
+
+    # Step 2: create agents + workers
+    agent_pm = _make_agent("agent_pm", "LiPM", "产品经理")
+    agent_eng = _make_agent("agent_eng", "ZhangEng", "Python工程师")
+    worker_pm = CollabAgentWorker(agent_pm)
+    worker_eng = CollabAgentWorker(agent_eng)
+    bus.subscribe("town.collab", worker_pm.handle_event)
+    bus.subscribe("town.collab", worker_eng.handle_event)
+
+    # Step 3: assign by role
+    agents_map = {
+        "agent_pm": AgentCapability(agent_id="agent_pm", role="产品经理"),
+        "agent_eng": AgentCapability(agent_id="agent_eng", role="Python工程师"),
+    }
+    for t in tasks:
+        ok = coordinator.assign_by_role(t, agents_map)
+        assert ok, f"Failed to assign task {t.task_id} ({t.required_role})"
+
+    # Step 4: run event loop
+    asyncio.run(bus.run_until_idle(max_events=50))
+
+    # Step 5: verify results collected
+    results = coordinator.collect_results("parent_e2e")
+    assert len(results) == 2, f"Expected 2 results, got {len(results)}"
+
+    # Step 6: verify task status
+    for t in tasks:
+        stored = coordinator._tasks.get(t.task_id)
+        assert stored is not None
+        assert stored.status == TaskStatus.DONE, f"Task {t.task_id} not DONE: {stored.status}"
+
+    # Step 7: synthesize
+    summary = asyncio.run(coordinator.synthesize_results(
+        "parent_e2e", "plan a feature release",
+    ))
+    assert len(summary) > 0
+    assert collab_llm.decompose_count == 1
+    assert collab_llm.synthesize_count == 1
