@@ -39,6 +39,7 @@ class IngestHub:
             intent_type: Optional[str] = None
     ) -> MemoryItem:
         import time
+        import uuid
 
         meta = metadata or {}
         if "confidence" not in meta:
@@ -64,7 +65,7 @@ class IngestHub:
             pass
 
         item = MemoryItem(
-            id=f"mem_{int(time.time() * 1000)}",
+            id=f"mem_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}",
             content=content,
             role=role,
             metadata=meta,
