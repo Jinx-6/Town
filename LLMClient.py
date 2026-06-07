@@ -8,14 +8,18 @@ from config import settings
 
 
 class LLMClient:
-    """LLM abstraction layer — supports any OpenAI-compatible API."""
+    """LLM abstraction layer — supports any OpenAI-compatible API.
 
-    def __init__(self):
-        self.sync_client = OpenAI(
+    Accepts optional mock clients for testing:
+        LLMClient(sync_client=mock_sync, async_client=mock_async)
+    """
+
+    def __init__(self, sync_client=None, async_client=None):
+        self.sync_client = sync_client or OpenAI(
             api_key=settings.ollama_api_key,
             base_url=settings.ollama_base_url
         )
-        self.async_client = AsyncOpenAI(
+        self.async_client = async_client or AsyncOpenAI(
             api_key=settings.ollama_api_key,
             base_url=settings.ollama_base_url
         )

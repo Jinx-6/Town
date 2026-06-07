@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from Test.mocks import MockLLMClient
 from Memory.schema.memory_item import MemoryRole
 from Memory.schema.routing import BackendTarget
 from Memory.schema.retrieval import RetrievalRequest, RetrievedMemory
@@ -150,7 +151,7 @@ def agent():
     )
     ingest = IngestHub(working_cache=cache, router=router, dispatcher=dispatcher)
 
-    planner = QueryPlanner()
+    planner = QueryPlanner(llm=MockLLMClient())
     scorer = MemoryScorer()
     policy = RetrievalPolicy()
     retrieve = RetrieveHub(

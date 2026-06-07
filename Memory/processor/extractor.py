@@ -18,8 +18,8 @@ class GraphExtractor:
     此任务极其耗时，强制要求在后台事件队列中执行！
     """
 
-    def __init__(self):
-        llm = LLMClient()
+    def __init__(self, llm: LLMClient = None):
+        llm = llm or LLMClient()
         self.model_name = llm.model
         self.client = llm.sync_client
 

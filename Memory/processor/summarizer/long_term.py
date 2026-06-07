@@ -14,8 +14,8 @@ class LongTermSummarizer:
     将天级别的陈旧对话（Episodic Memory），压缩提纯为高密度的语义记忆（Semantic Memory）。
     """
 
-    def __init__(self):
-        llm = LLMClient()
+    def __init__(self, llm: LLMClient = None):
+        llm = llm or LLMClient()
         self.model_name = llm.model
         self.client = llm.sync_client
 

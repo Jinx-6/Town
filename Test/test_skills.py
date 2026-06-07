@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from Test.mocks import MockLLMClient
 from agents.event import Event
 from skills.base import Skill, SkillResult
 from skills.registry import SkillRegistry
@@ -88,7 +89,7 @@ def _build_agent(agent_id, agent_name, tmpdir, canned):
     ingest = IngestHub(working_cache=cache, router=WriteRouter(),
                        dispatcher=dispatcher)
 
-    planner = QueryPlanner()
+    planner = QueryPlanner(llm=MockLLMClient())
     scorer = MemoryScorer()
     retrieval_policy = RetrievalPolicy()
     retrieve = RetrieveHub(

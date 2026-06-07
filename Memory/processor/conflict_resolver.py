@@ -27,8 +27,8 @@ class ConflictResolver:
     利用大模型的逻辑推理能力，对比新旧两段记忆，决定如何化解矛盾。
     """
 
-    def __init__(self):
-        llm = LLMClient()
+    def __init__(self, llm: LLMClient = None):
+        llm = llm or LLMClient()
         self.model_name = llm.model
         self.client = llm.sync_client
 

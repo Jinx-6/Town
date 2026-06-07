@@ -38,8 +38,8 @@ class QueryPlanner:
     依赖大模型的推理能力，进行 Query 重写、多意图拆解和语义联想。
     """
 
-    def __init__(self):
-        llm = LLMClient()
+    def __init__(self, llm: LLMClient = None):
+        llm = llm or LLMClient()
         self.model_name = llm.model
         self.client = llm.sync_client
 

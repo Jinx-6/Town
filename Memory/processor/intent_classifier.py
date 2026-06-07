@@ -185,8 +185,8 @@ class LLMIntentClassifier:
     当本地模型不可用时降级为 RuleBasedIntentClassifier。
     """
 
-    def __init__(self):
-        self._llm = LLMClient()
+    def __init__(self, llm: LLMClient = None):
+        self._llm = llm or LLMClient()
         self.model_name = self._llm.model
 
     @property

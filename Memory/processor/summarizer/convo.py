@@ -15,8 +15,8 @@ class ConvoSummarizer:
     用于解决单次会话过长导致的 Token 爆炸问题，生成当前对话的”前情提要”。
     “””
 
-    def __init__(self):
-        llm = LLMClient()
+    def __init__(self, llm: LLMClient = None):
+        llm = llm or LLMClient()
         self.model_name = llm.model
         self.client = llm.sync_client
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from Test.mocks import MockLLMClient
 from agents.event import Event
 from agents.event_bus import EventBus, SchedulerPolicy
 from agents.agent_worker import AgentWorker
@@ -431,7 +432,7 @@ class TestPubSubMemoryIsolation:
         ingest = IngestHub(working_cache=cache, router=WriteRouter(),
                           dispatcher=dispatcher)
 
-        planner = QueryPlanner()
+        planner = QueryPlanner(llm=MockLLMClient())
         scorer = MemoryScorer()
         retrieval_policy = RetrievalPolicy()
         retrieve = RetrieveHub(
