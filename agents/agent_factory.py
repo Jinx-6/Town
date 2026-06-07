@@ -36,7 +36,7 @@ def reset_memory(agent_id: str, sqlite: SQLiteLogStorage, vector_store: VectorSt
     print(f"[System] 已清除 {agent_id} 的全部记忆数据")
 
 
-def setup_memory(agent_id: str):
+def setup_memory(agent_id: str, llm=None):
     """组装记忆系统：SQLite + ChromaDB，不含 Neo4j。"""
     cache = WorkingMemoryCache()
     sqlite = SQLiteLogStorage(db_path=f"demo_{agent_id}.db")
@@ -60,7 +60,7 @@ def setup_memory(agent_id: str):
 
     ingest = IngestHub(working_cache=cache, router=router, dispatcher=dispatcher)
 
-    planner = QueryPlanner()
+    planner = QueryPlanner(llm=llm)
     scorer = MemoryScorer()
     retrieval_policy = RetrievalPolicy()
 
@@ -87,7 +87,7 @@ def create_memory_aware_agent(
     time_boost_fn=None,
 ):
     """一站式创建 MemoryAwareAgent。"""
-    ingest, retrieve, cache, sqlite, vector_store = setup_memory(agent_id)
+    ingest, retrieve, cache, sqlite, vector_store = setup_memory(agent_id, llm=llm_client)
 
     classifier = create_intent_classifier(use_llm=False)
     assembler = PromptAssembler(agent_name=agent_name)

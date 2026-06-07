@@ -11,10 +11,11 @@ from agents.collab_schema import (
     CollaborationTask, AgentCapability, TaskStatus,
     TASK_ASSIGNED, TASK_DONE,
 )
+from Test.mocks import MockLLMClient
 
 
 class FakeLLM:
-    """Canned-response LLM — no external dependencies."""
+    """Canned-response LLM — for tests that need call_count tracking."""
 
     def __init__(self, reply: str = "task completed"):
         self._reply = reply
@@ -32,7 +33,7 @@ def _make_agent(agent_id, agent_name="TestAgent", agent_role="tester"):
     """Create a minimal MemoryAwareAgent for tests."""
     agent, _c, _s, _v = create_memory_aware_agent(
         agent_id=agent_id, agent_name=agent_name, agent_role=agent_role,
-        llm_client=FakeLLM(reply=f"[{agent_name}] done"),
+        llm_client=MockLLMClient(canned_response=f"[{agent_name}] done"),
     )
     return agent
 

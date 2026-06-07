@@ -5,19 +5,7 @@ from agents.agent_runtime import create_agent_runtime, AgentRuntimeBundle
 from agents.memory_aware_agent import MemoryAwareAgent
 from Memory.schema.memory_item import MemoryRole
 from Memory.policies.retention import RetentionPolicy
-
-
-class FakeLLM:
-    """Canned-response LLM for tests — no external dependencies."""
-
-    def __init__(self, reply: str = "test"):
-        self._reply = reply
-
-    async def generate(self, system_prompt: str, messages: list) -> str:
-        return self._reply
-
-    async def generate_with_tools(self, system_prompt, messages, tools):
-        return {"text": "", "tool_calls": [], "finish_reason": "stop"}
+from Test.mocks import MockLLMClient
 
 
 class FakeSummarizer:
@@ -60,7 +48,7 @@ def test_create_agent_unchanged():
     """create_memory_aware_agent returns the original 4-tuple signature."""
     result = create_memory_aware_agent(
         agent_id="test_orig", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(),
+        llm_client=MockLLMClient(),
     )
 
     assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
@@ -79,7 +67,7 @@ def test_runtime_without_consolidation():
     """enable_consolidation=False: bundle has no consolidate_hub or index_manager."""
     bundle = create_agent_runtime(
         agent_id="test_off", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_consolidation=False,
+        llm_client=MockLLMClient(), enable_consolidation=False,
     )
 
     assert isinstance(bundle, AgentRuntimeBundle)
@@ -97,7 +85,7 @@ def test_runtime_with_consolidation():
     """enable_consolidation=True: bundle holds both ConsolidateHub and IndexManager."""
     bundle = create_agent_runtime(
         agent_id="test_on", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_consolidation=True,
+        llm_client=MockLLMClient(), enable_consolidation=True,
         summarizer=FakeSummarizer(), retention_policy=NoopRetentionPolicy(),
     )
 
@@ -121,7 +109,7 @@ def test_consolidate_once_manual_trigger():
     """consolidate_once() runs synchronously without cron or LLM dependency."""
     bundle = create_agent_runtime(
         agent_id="test_manual", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_consolidation=True,
+        llm_client=MockLLMClient(), enable_consolidation=True,
         summarizer=FakeSummarizer(), retention_policy=NoopRetentionPolicy(),
     )
 
@@ -169,7 +157,7 @@ def test_consolidate_once_without_consolidation_raises():
     """Calling consolidate_once() when disabled raises RuntimeError."""
     bundle = create_agent_runtime(
         agent_id="test_err", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_consolidation=False,
+        llm_client=MockLLMClient(), enable_consolidation=False,
     )
 
     try:

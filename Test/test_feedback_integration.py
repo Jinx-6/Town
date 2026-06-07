@@ -10,19 +10,7 @@ from Memory.evaluation.online_feedback import (
     FeedbackCollector, FeedbackEvent, FeedbackType,
 )
 from Memory.schema.memory_item import MemoryRole
-
-
-class FakeLLM:
-    """Canned-response LLM for tests — no external dependencies."""
-
-    def __init__(self, reply: str = "test"):
-        self._reply = reply
-
-    async def generate(self, system_prompt: str, messages: list) -> str:
-        return self._reply
-
-    async def generate_with_tools(self, system_prompt, messages, tools):
-        return {"text": "", "tool_calls": [], "finish_reason": "stop"}
+from Test.mocks import MockLLMClient
 
 
 def _wait_for_queue(dispatcher, timeout: float = 10.0) -> None:
@@ -52,7 +40,7 @@ def test_runtime_with_feedback_collector():
     """enable_feedback_collector=True: bundle holds a FeedbackCollector."""
     bundle = create_agent_runtime(
         agent_id="test_fb_on", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_feedback_collector=True,
+        llm_client=MockLLMClient(), enable_feedback_collector=True,
     )
 
     assert bundle.feedback_collector is not None, "FeedbackCollector should be created"
@@ -66,7 +54,7 @@ def test_record_feedback_writes_jsonl():
         fc = FeedbackCollector(log_dir=tmpdir)
         bundle = create_agent_runtime(
             agent_id="test_fb_log", agent_name="Test", agent_role="tester",
-            llm_client=FakeLLM(),
+            llm_client=MockLLMClient(),
             enable_feedback_collector=True,
             feedback_collector=fc,
         )
@@ -98,7 +86,7 @@ def test_correction_feedback_bridges_to_update_hub():
     """CORRECTION with cited_memory_ids + text_comment triggers memory update."""
     bundle = create_agent_runtime(
         agent_id="test_fb_corr", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(),
+        llm_client=MockLLMClient(),
         enable_update_hub=True,
         enable_feedback_collector=True,
     )
@@ -151,7 +139,7 @@ def test_non_correction_feedback_does_not_bridge_to_update_hub():
     """THUMBS_UP / THUMBS_DOWN must not trigger update_memory even with text_comment."""
     bundle = create_agent_runtime(
         agent_id="test_fb_noncorr", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(),
+        llm_client=MockLLMClient(),
         enable_update_hub=True,
         enable_feedback_collector=True,
     )
@@ -197,7 +185,7 @@ def test_record_feedback_without_enabling_raises():
     """Calling record_feedback() when disabled raises RuntimeError."""
     bundle = create_agent_runtime(
         agent_id="test_fb_err", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_feedback_collector=False,
+        llm_client=MockLLMClient(), enable_feedback_collector=False,
     )
 
     event = _make_feedback_event()

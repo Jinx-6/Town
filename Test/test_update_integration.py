@@ -3,19 +3,7 @@ import time
 from agents.agent_runtime import create_agent_runtime, AgentRuntimeBundle
 from agents.memory_aware_agent import MemoryAwareAgent
 from Memory.schema.memory_item import MemoryRole
-
-
-class FakeLLM:
-    """Canned-response LLM for tests — no external dependencies."""
-
-    def __init__(self, reply: str = "test"):
-        self._reply = reply
-
-    async def generate(self, system_prompt: str, messages: list) -> str:
-        return self._reply
-
-    async def generate_with_tools(self, system_prompt, messages, tools):
-        return {"text": "", "tool_calls": [], "finish_reason": "stop"}
+from Test.mocks import MockLLMClient
 
 
 def _wait_for_queue(dispatcher, timeout: float = 10.0) -> None:
@@ -35,7 +23,7 @@ def test_runtime_with_update_hub():
     """enable_update_hub=True: bundle holds UpdateHub and shared IndexManager."""
     bundle = create_agent_runtime(
         agent_id="test_up_on", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_update_hub=True,
+        llm_client=MockLLMClient(), enable_update_hub=True,
     )
 
     assert isinstance(bundle, AgentRuntimeBundle)
@@ -56,7 +44,7 @@ def test_update_content_replaces_memory():
     """update_memory() wipes old content and writes new content across stores."""
     bundle = create_agent_runtime(
         agent_id="test_up_c", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_update_hub=True,
+        llm_client=MockLLMClient(), enable_update_hub=True,
     )
 
     # Inject original memory
@@ -101,7 +89,7 @@ def test_update_metadata_modifies_metadata():
     """update_memory_metadata() changes metadata fields without touching content."""
     bundle = create_agent_runtime(
         agent_id="test_up_m", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_update_hub=True,
+        llm_client=MockLLMClient(), enable_update_hub=True,
     )
 
     # Inject a memory
@@ -137,7 +125,7 @@ def test_update_memory_without_enabling_raises():
     """Calling update_memory() when disabled raises RuntimeError."""
     bundle = create_agent_runtime(
         agent_id="test_up_err", agent_name="Test", agent_role="tester",
-        llm_client=FakeLLM(), enable_update_hub=False,
+        llm_client=MockLLMClient(), enable_update_hub=False,
     )
 
     try:

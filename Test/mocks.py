@@ -12,7 +12,19 @@ Usage:
     agent = MemoryAwareAgent(..., llm_client=mock_llm)
 """
 
+import json
 from typing import Optional, Dict, Any
+
+# Default valid JSON that satisfies QueryPlanner.generate_plan() parser
+_PLANNER_JSON = json.dumps({
+    "original_query": "mock query",
+    "instructions": [{
+        "intent": "mock intent",
+        "search_query": "mock search",
+        "keywords": ["mock"],
+        "time_filter": "all"
+    }]
+})
 
 
 # ── Mock response helpers ──────────────────────────────
@@ -41,7 +53,7 @@ class _MockChat:
 class _MockCompletions:
     """Mock for openai.OpenAI().chat.completions.create() — sync."""
 
-    def __init__(self, canned_response: str = "(mock reply)"):
+    def __init__(self, canned_response: str = _PLANNER_JSON):
         self.canned = canned_response
         self.calls: list = []
 
@@ -67,8 +79,8 @@ class _MockAsyncCompletions:
 class MockSyncClient:
     """Drop-in replacement for openai.OpenAI, exposing .chat.completions.create()."""
 
-    def __init__(self, canned_response: str = "(mock reply)"):
-        self.chat = _MockChat(_MockCompletions(canned_response))
+    def __init__(self, canned_response: str = None):
+        self.chat = _MockChat(_MockCompletions(canned_response or _PLANNER_JSON))
 
     @property
     def calls(self):
@@ -78,8 +90,8 @@ class MockSyncClient:
 class MockAsyncClient:
     """Drop-in replacement for openai.AsyncOpenAI, exposing .chat.completions.create()."""
 
-    def __init__(self, canned_response: str = "(mock reply)"):
-        self.chat = _MockChat(_MockAsyncCompletions(canned_response))
+    def __init__(self, canned_response: str = None):
+        self.chat = _MockChat(_MockAsyncCompletions(canned_response or _PLANNER_JSON))
 
     @property
     def calls(self):
@@ -91,22 +103,25 @@ class MockAsyncClient:
 class MockLLMClient:
     """
     Unified mock for LLMClient, usable via both constructor injection
-    and agent `llm_client` injection.
+    and agent ``llm_client`` injection.
 
     Sync path (memory processors):
-        >>> llm = MockLLMClient(canned="hello")
+        >>> llm = MockLLMClient()
         >>> extractor = GraphExtractor(llm=llm)
+        >>> # sync_client.chat.completions.create() returns valid QueryPlanner JSON
 
     Async path (agents):
-        >>> llm = MockLLMClient(canned="done")
+        >>> llm = MockLLMClient(canned="task done")
         >>> agent = MemoryAwareAgent(..., llm_client=llm)
+        >>> # llm.generate() returns "task done"
     """
 
     def __init__(self, canned_response: str = "(mock reply)"):
         self.model = "mock-model"
-        self.sync_client = MockSyncClient(canned_response)
-        self.async_client = MockAsyncClient(canned_response)
         self._canned = canned_response
+        # Sync path returns valid JSON by default, async path uses canned_response
+        self.sync_client = MockSyncClient(_PLANNER_JSON)
+        self.async_client = MockAsyncClient(canned_response)
 
     # ── Agent-compatible async interface ───────────────
 
