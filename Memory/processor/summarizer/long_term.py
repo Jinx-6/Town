@@ -4,10 +4,8 @@
 # @Software:PyCharm
 
 
-import os
 from typing import Optional
-from openai import OpenAI
-from dotenv import load_dotenv
+from LLMClient import LLMClient
 
 
 class LongTermSummarizer:
@@ -15,15 +13,11 @@ class LongTermSummarizer:
     长期记忆压缩器 (Long-Term Memory Summarizer)
     将天级别的陈旧对话（Episodic Memory），压缩提纯为高密度的语义记忆（Semantic Memory）。
     """
-    load_dotenv()
+
     def __init__(self):
-        model_name = os.getenv("OLLAMA_MODEL_ID") or "qwen"
-        base_url = os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
-        api_key = os.getenv("OLLAMA_API_KEY") or "ollama"
-        self.model_name = model_name
-        self.client = OpenAI(
-            api_key=api_key,
-        base_url=base_url)
+        llm = LLMClient()
+        self.model_name = llm.model
+        self.client = llm.sync_client
 
     def compress_to_semantic(self, dialogue_text: str) -> str:
         """

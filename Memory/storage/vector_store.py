@@ -8,12 +8,13 @@
 让NPC拥有联想能力的关键
     暂时使用ChromaDB
 """
+import os
 import chromadb
 import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-# ✨ 注意：这里导入的是你定义的 RetrievedMemory 和 BackendTarget
+from config import settings
 from ..schema.memory_item import MemoryItem, MemoryRole, MemoryStage
 from ..schema.retrieval import RetrievedMemory
 from ..schema.routing import BackendTarget
@@ -29,8 +30,8 @@ class VectorStore:
     def __init__(self, db_path: str = "./chroma_db", collection_name: str = "cyber_town_memory"):
         self.client = chromadb.PersistentClient(path=db_path)
 
-        # 配置中文向量模型 (BGE-Small)
-        model_name_or_path = r"D:\DTcoding\models\BAAI\bge-small-zh-v1___5"
+        # 配置中文向量模型：优先本地路径，留空则自动从 HuggingFace 下载
+        model_name_or_path = settings.embedding_model_path or "BAAI/bge-small-zh-v1.5"
         self.ef = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=model_name_or_path
         )

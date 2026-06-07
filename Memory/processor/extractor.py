@@ -5,13 +5,9 @@
 
 # 知识图谱抽取
 import json
-import os
-from pathlib import Path
-from dotenv import load_dotenv
 from pydantic import ValidationError
 from typing import Optional
-from openai import OpenAI
-# ✨ 核心改动：从 Schema 中引入数据契约
+from LLMClient import LLMClient
 from ..schema.graph import ExtractionResult
 
 
@@ -23,22 +19,9 @@ class GraphExtractor:
     """
 
     def __init__(self):
-        current_file = Path(__file__).resolve()
-        town_dir = current_file.parent.parent.parent
-        env_path = town_dir / '.env'
-        load_dotenv(dotenv_path=env_path)
-
-        model_name = os.getenv("OLLAMA_MODEL_ID") or "qwen"
-        base_url = os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
-        api_key = os.getenv("OLLAMA_API_KEY") or "ollama"
-
-        self.model_name = model_name
-
-        # 🌟 关键：在这里直接传参，不要依赖环境变量的自动读取
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+        llm = LLMClient()
+        self.model_name = llm.model
+        self.client = llm.sync_client
 
     def extract(self, text: str, user_name: str = "用户", agent_name: str = "张三") -> ExtractionResult:
         """核心入口：调用 LLM 从文本中提取符合 ExtractionResult 结构的三元组"""

@@ -6,10 +6,10 @@
 
 两者共享 IntentClassification 输出契约。
 """
-import os
 import json
 from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
+from LLMClient import LLMClient
 
 
 # ── 输出契约 ──────────────────────────────────────────
@@ -186,19 +186,12 @@ class LLMIntentClassifier:
     """
 
     def __init__(self):
-        from dotenv import load_dotenv
-        load_dotenv()
-        self.model_name = os.getenv("OLLAMA_MODEL_ID") or "qwen"
-        self.base_url = os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
-        self.api_key = os.getenv("OLLAMA_API_KEY") or "ollama"
-        self._client = None
+        self._llm = LLMClient()
+        self.model_name = self._llm.model
 
     @property
     def client(self):
-        if self._client is None:
-            from openai import OpenAI
-            self._client = OpenAI(base_url=self.base_url, api_key=self.api_key)
-        return self._client
+        return self._llm.sync_client
 
     def classify(self, user_input: str) -> IntentClassification:
         try:

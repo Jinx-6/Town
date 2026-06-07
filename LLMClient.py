@@ -3,15 +3,19 @@
 # @File    :LLMClient.py
 # @Software:PyCharm
 
-from openai import AsyncOpenAI
+from openai import OpenAI, AsyncOpenAI
 from config import settings
 
 
 class LLMClient:
-    """LLM abstraction layer (Ollama via OpenAI-compatible API)."""
+    """LLM abstraction layer — supports any OpenAI-compatible API."""
 
     def __init__(self):
-        self.client = AsyncOpenAI(
+        self.sync_client = OpenAI(
+            api_key=settings.ollama_api_key,
+            base_url=settings.ollama_base_url
+        )
+        self.async_client = AsyncOpenAI(
             api_key=settings.ollama_api_key,
             base_url=settings.ollama_base_url
         )
@@ -22,7 +26,7 @@ class LLMClient:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
         try:
-            response = await self.client.chat.completions.create(
+            response = await self.async_client.chat.completions.create(
                 model=self.model,
                 messages=full_messages,
                 temperature=0.7
@@ -59,7 +63,7 @@ class LLMClient:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
         try:
-            response = await self.client.chat.completions.create(
+            response = await self.async_client.chat.completions.create(
                 model=self.model,
                 messages=full_messages,
                 temperature=0.1,

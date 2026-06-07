@@ -16,29 +16,21 @@
     我们可以放心的选择路线 A ，因为分层存储策略的存在，用户原话已经作为流水账被安全锁在SQLite中了
 '''
 import json
-import os
 from typing import Optional
-from openai import OpenAI
+from LLMClient import LLMClient
 from ..schema.memory_item import MemoryItem
-# ✨ 核心改动：引入我们统一的判决书契约
 from ..schema.conflict import ConflictRecord, ConflictType, ResolutionStrategy
-from dotenv import load_dotenv
 
 class ConflictResolver:
-    load_dotenv()
     """
     记忆冲突仲裁引擎 (Conflict Resolver)
     利用大模型的逻辑推理能力，对比新旧两段记忆，决定如何化解矛盾。
     """
 
     def __init__(self):
-        model_name = os.getenv("OLLAMA_MODEL_ID") or "qwen"
-        base_url = os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
-        api_key = os.getenv("OLLAMA_API_KEY") or "ollama"
-        self.model_name = model_name
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=base_url)
+        llm = LLMClient()
+        self.model_name = llm.model
+        self.client = llm.sync_client
 
     def resolve(self, old_memory: MemoryItem, new_statement: str) -> ConflictRecord:
         """

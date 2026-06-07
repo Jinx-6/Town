@@ -4,27 +4,21 @@
 # @Software:PyCharm
 
 
-import os
 from typing import List, Optional
-from openai import OpenAI
+from LLMClient import LLMClient
 from Memory.schema.memory_item import MemoryItem, MemoryRole
-from dotenv import load_dotenv
 
 
 class ConvoSummarizer:
-    """
+    “””
     短期对话摘要器 (Conversation Sliding Window Summarizer)
-    用于解决单次会话过长导致的 Token 爆炸问题，生成当前对话的“前情提要”。
-    """
-    load_dotenv()
+    用于解决单次会话过长导致的 Token 爆炸问题，生成当前对话的”前情提要”。
+    “””
+
     def __init__(self):
-        model_name = os.getenv("OLLAMA_MODEL_ID") or "qwen"
-        base_url = os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
-        api_key = os.getenv("OLLAMA_API_KEY") or "ollama"
-        self.model_name = model_name
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=base_url)
+        llm = LLMClient()
+        self.model_name = llm.model
+        self.client = llm.sync_client
 
     def generate_sliding_summary(self, recent_items: List[MemoryItem], previous_summary: str = "") -> str:
         """

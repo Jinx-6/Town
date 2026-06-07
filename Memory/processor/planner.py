@@ -5,11 +5,9 @@
 
 
 import json
-import os
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional
-from openai import OpenAI
-from dotenv import load_dotenv
+from LLMClient import LLMClient
 
 
 # ==========================================
@@ -39,18 +37,11 @@ class QueryPlanner:
     智能意图拆解与规划层
     依赖大模型的推理能力，进行 Query 重写、多意图拆解和语义联想。
     """
-    load_dotenv()
+
     def __init__(self):
-        # 实例化 LLM 客户端
-        # 通过传入 base_url，你可以无缝切换到本地部署模型或其他厂商的 API
-        model_name = os.getenv("OLLAMA_MODEL_ID") or "qwen"
-        base_url = os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
-        api_key = os.getenv("OLLAMA_API_KEY") or "ollama"
-        self.model_name = model_name
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+        llm = LLMClient()
+        self.model_name = llm.model
+        self.client = llm.sync_client
 
     def generate_plan(self, raw_query: str) -> RetrievalPlan:
         """核心入口：调用真实的 LLM 生成结构化检索计划"""
